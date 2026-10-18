@@ -1,0 +1,2 @@
+{"type":"session","version":3,"id":"9f3a70b5-19de-47e5-ae03-8d36af01a491","timestamp":"2025-01-01T00:00:00.000Z","cwd":"/workspace/fixture"}
+{"type":"message","id":"fixture-entry-1","parentId":null,"timestamp":"2025-01-01T00:00:01.000Z","message":{"role":"user","content":"Synthetic fixture only"}}

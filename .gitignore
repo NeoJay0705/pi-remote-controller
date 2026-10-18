@@ -1,2 +1,9 @@
 # Others
 tmp*
+node_modules/
+dist/
+.test-artifacts/
+.env
+.env.*
+!.env.example
+config/local.json

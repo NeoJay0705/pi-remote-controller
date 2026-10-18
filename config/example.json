@@ -1,0 +1,29 @@
+{
+  "port": 4317,
+  "publicOrigin": "http://127.0.0.1:4317",
+  "listenHost": "127.0.0.1",
+  "allowTailnetHttp": false,
+  "dataDir": "/absolute/path/to/prw-data",
+  "piCli": "/absolute/path/to/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+  "projects": [
+    {
+      "id": "plain-project",
+      "name": "Plain development",
+      "cwd": "/absolute/path/to/project",
+      "sessionDir": "/absolute/path/to/project/.pi/sessions"
+    }
+  ],
+  "profiles": [
+    { "id": "plain", "name": "Pi defaults" },
+    {
+      "id": "user-development",
+      "name": "User development example (not compatibility-verified)",
+      "provider": "openai",
+      "model": "gpt-6.1-sol",
+      "thinking": "high",
+      "extensions": [],
+      "tools": ["+subagent", "+codemode"],
+      "appendSystemPrompts": ["/absolute/path/to/subagent-parent-policy.md"]
+    }
+  ]
+}

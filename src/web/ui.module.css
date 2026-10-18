@@ -1,0 +1,370 @@
+.app {
+  min-height: 100dvh;
+  display: flex;
+  background: var(--page);
+  color: var(--ink);
+}
+.sidebar {
+  width: 280px;
+  flex: none;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.brand {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 12px;
+  color: #5c471d;
+}
+.brand span {
+  color: var(--ink);
+}
+.sidebar label {
+  display: grid;
+  gap: 6px;
+  color: #49443b;
+  font-size: 12px;
+}
+.sidebar select,
+.draft select {
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid #8e877b;
+  padding: 10px;
+  border-radius: 8px;
+  min-width: 0;
+}
+.sidebar button,
+.actions button,
+.draft button,
+.receipts button,
+.cleared button,
+.older {
+  border: 1px solid #827a6e;
+  background: #fff;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 10px;
+  cursor: pointer;
+}
+.sidebar nav {
+  display: grid;
+  gap: 5px;
+  overflow: auto;
+}
+.sidebar nav button {
+  text-align: left;
+  display: grid;
+  gap: 3px;
+}
+.sidebar nav small {
+  color: #514b40;
+}
+.selected {
+  border-color: #51401f !important;
+  background: #eee5d1 !important;
+}
+.sessionLabel {
+  font-size: 12px;
+  color: #514b40;
+  margin-top: 8px;
+}
+.logout {
+  margin-top: auto;
+}
+.main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-height: 100dvh;
+}
+.header {
+  min-height: 68px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 22px;
+}
+.header div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+.header small {
+  color: #514b40;
+  overflow-wrap: anywhere;
+}
+.connection {
+  margin-left: auto;
+  white-space: nowrap;
+  color: #8a2626;
+}
+.online {
+  color: #235b34;
+}
+.status {
+  display: flex;
+  gap: 10px 20px;
+  flex-wrap: wrap;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--line);
+  color: #514b40;
+  font-size: 12px;
+}
+.status b {
+  color: var(--ink);
+  margin-left: 4px;
+}
+.chat {
+  flex: 1;
+  min-height: 100px;
+  overflow: auto;
+  padding: 20px clamp(14px, 4vw, 56px);
+  min-width: 0;
+}
+.empty {
+  color: #514b40;
+  text-align: center;
+  margin: 15vh auto;
+}
+.entry {
+  margin: 0 auto 20px;
+  max-width: 900px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+}
+.entry small {
+  display: block;
+  color: #514b40;
+  font-size: 11px;
+  margin-bottom: 7px;
+}
+.entry p {
+  margin: 8px 0;
+}
+.entry pre,
+.cleared pre,
+.toolCard pre {
+  overflow-x: auto;
+  max-width: 100%;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f0ede5;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.entry :global(code) {
+  overflow-wrap: anywhere;
+}
+.entry a {
+  color: #263f68;
+}
+.older {
+  display: block;
+  margin: 0 auto 20px;
+}
+.cleared,
+.toolCard {
+  max-width: 900px;
+  margin: 10px auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--ink);
+  background: #fff;
+}
+.controls {
+  border-top: 1px solid var(--line);
+  padding: 12px clamp(12px, 3vw, 32px);
+  background: var(--panel);
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.actions button:disabled,
+.draft button:disabled,
+.sidebar button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.stop {
+  background: #f5e2df !important;
+  border-color: #8a2626 !important;
+}
+.draft {
+  display: flex;
+  gap: 9px;
+  align-items: flex-end;
+}
+.draft textarea {
+  flex: 1;
+  min-width: 0;
+  resize: vertical;
+  min-height: 62px;
+  max-height: 200px;
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid #827a6e;
+  border-radius: 9px;
+  padding: 12px;
+  font: inherit;
+}
+.draft button {
+  background: #e8dfca;
+  border-color: #75643e;
+}
+.receipts {
+  border-top: 1px solid var(--line);
+  padding: 8px 20px;
+  max-height: 130px;
+  overflow: auto;
+  color: #514b40;
+}
+.receipts details > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 4px;
+}
+.error {
+  background: #f4dfda;
+  color: #681c18;
+  padding: 10px 20px;
+}
+.error button {
+  float: right;
+}
+.menu,
+.mobileClose {
+  display: none;
+}
+.login {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: var(--page);
+  color: var(--ink);
+}
+.login form {
+  width: min(100%, 390px);
+  display: grid;
+  gap: 15px;
+  background: var(--panel);
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.login h1 {
+  font-size: 22px;
+  margin: 0;
+}
+.login p {
+  color: #514b40;
+}
+.login input {
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #827a6e;
+  background: #fff;
+  color: var(--ink);
+}
+.login button {
+  padding: 12px;
+  background: #e8dfca;
+  color: var(--ink);
+  border: 1px solid #75643e;
+  border-radius: 8px;
+}
+.mark {
+  font-size: 40px;
+  color: #5c471d;
+}
+.toolBadge {
+  font-weight: 700;
+  background: #eee5d1;
+  border: 1px solid #75643e;
+  border-radius: 5px;
+  padding: 2px 6px;
+}
+.toolCard {
+  overflow-wrap: anywhere;
+}
+.toolCard summary {
+  cursor: pointer;
+}
+@media (max-width: 700px) {
+  .sidebar {
+    display: none;
+  }
+  .sidebar.open {
+    display: flex;
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: min(86vw, 320px);
+    z-index: 5;
+    box-shadow: 20px 0 50px #0003;
+  }
+  .mobileClose {
+    display: block;
+    float: right;
+  }
+  .menu {
+    display: block;
+    background: none;
+    border: 0;
+    color: var(--ink);
+    font-size: 22px;
+  }
+  .header {
+    padding: 10px 12px;
+  }
+  .header small {
+    font-size: 10px;
+  }
+  .status {
+    padding: 9px 12px;
+    gap: 8px 12px;
+  }
+  .chat {
+    padding: 14px 12px;
+  }
+  .draft {
+    flex-wrap: wrap;
+  }
+  .draft select {
+    width: 100%;
+  }
+  .draft textarea {
+    flex-basis: 100%;
+    min-height: 78px;
+  }
+  .draft button {
+    flex: 1;
+  }
+  .controls {
+    padding: 10px;
+  }
+  .actions button {
+    flex: 1;
+  }
+  .receipts {
+    padding: 7px 12px;
+  }
+  .receipts details > div {
+    flex-wrap: wrap;
+  }
+}
