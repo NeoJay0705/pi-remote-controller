@@ -1,5 +1,7 @@
 # Pi Remote Workspace v1 — 驗證紀錄
 
+公開版本已將主機位址與個人路徑匿名化；下列歷史驗證結果不因此改變。
+
 目前狀態：Project root 選擇與 Compact 拒絕狀態修正已部署。本輪隔離驗收通過 97 tests／20 files 與 12 browser cases；前 83 tests／18 files、10 cases 為保留的上一階段結果。另有一次限定 `user-development` 真模型修復情境成功並自然 settled；這不代表本輪重跑模型或所有 extensions 全相容。歷史 child Python `SyntaxError` 的舊 run report 保持原樣，不以後續成功覆寫。真 steering、真 Compact/provider 新 prompt、受管理真 TUI、完整 extensions、實體 phone、跨裝置 VPN 與 HTTPS 尚未驗證。以下 clean-room 40 tests、delta 43 與 68 tests／8 cases 均為各自歷史結果，不覆寫或取代本輪結果，也不代表所有環境皆適用。
 
 ## 技術與測試範圍
@@ -87,8 +89,8 @@ commonProfile 的真實工具 subagent/codemode 往返曾成功，但 child Pyth
 
 | 命令                                                                                                                                                              | Checkout                                                                                                                               | Exit code | 結果摘要                                                                | Run root                                                    |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------: | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `npm run check`                                                                                                                                                   | `/home/<user>/repos/pi-remote-controller/.test-artifacts/final-verification/clean-room/6b58eb67-0dd8-4db9-8a48-a204ccd9367d/checkout` |         0 | format、lint、typecheck、40/40 tests（13 files）、server/web build 通過 | `.test-artifacts/runs/a3b09b6b-60eb-4832-a9ea-3a8abbf8d952` |
-| `env PRW_BROWSER_EXECUTABLE=/home/<user>/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell npm run test:e2e` | `/home/<user>/repos/pi-remote-controller/.test-artifacts/final-verification/clean-room/6b58eb67-0dd8-4db9-8a48-a204ccd9367d/checkout` |         0 | 自動建置 dist/web；8/8 browser cases 通過                               | `.test-artifacts/runs/37b4c6d3-a553-4b04-b5c9-2291f2fe2cdd` |
+| `npm run check`                                                                                                                                                   | `.test-artifacts/final-verification/clean-room/6b58eb67-0dd8-4db9-8a48-a204ccd9367d/checkout` |         0 | format、lint、typecheck、40/40 tests（13 files）、server/web build 通過 | `.test-artifacts/runs/a3b09b6b-60eb-4832-a9ea-3a8abbf8d952` |
+| `PRW_BROWSER_EXECUTABLE=/absolute/path/to/chrome-headless-shell npm run test:e2e` | `.test-artifacts/final-verification/clean-room/6b58eb67-0dd8-4db9-8a48-a204ccd9367d/checkout` |         0 | 自動建置 dist/web；8/8 browser cases 通過                               | `.test-artifacts/runs/37b4c6d3-a553-4b04-b5c9-2291f2fe2cdd` |
 
 ## 本輪 tailnet-review 合成回歸
 

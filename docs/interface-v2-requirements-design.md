@@ -1,5 +1,7 @@
 # Interface v2 增量需求與設計
 
+公開版本已將主機位址與個人路徑匿名化；下列歷史驗證結果不因此改變。
+
 狀態：Project root 選擇與 Compact 拒絕狀態修正已部署。本文只歸檔 Interface v2 增量，不取代 `docs/workspace-v1-requirements.md` 或 `docs/workspace-v1-design.md`。本輪隔離結果為 97 tests／20 files、12 browser cases 通過；83 tests／18 files、10 cases 是前一階段保留的歷史結果。限定 `user-development` 真模型修復是先前成功情境，不代表本輪重跑模型或所有 extensions 全相容。證據與限制見 [workspace-v1 驗證紀錄](workspace-v1-verification.md)。
 
 ## UX01：Project 與 session 目錄

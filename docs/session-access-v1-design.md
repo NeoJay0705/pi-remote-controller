@@ -1,6 +1,8 @@
 # Session Access v1：免交接 Web／TUI 接續與原生 JSONL 按頁讀取
 
-狀態：**大型 session 400 相容性修正版已部署；部署檢查通過；實際個人大 session 載入效果仍待 Owner 確認。真 Pi/TUI/模型完整端到端未驗證。**本文記錄目前實作、部署與可確認的驗證證據。固定 release 為 `session-access-v1-history-fix-140`，正式 URL 為 <http://TAILNET_IP:4317>。需求見[需求文件](session-access-v1-requirements.md)，驗收見[驗收文件](session-access-v1-verification.md)。
+公開版本已將主機位址與個人路徑匿名化；下列歷史驗證結果不因此改變。
+
+狀態：**大型 session 400 相容性修正版已部署；部署檢查通過；實際個人大 session 載入效果仍待 Owner 確認。真 Pi/TUI/模型完整端到端未驗證。**本文記錄目前實作、部署與可確認的驗證證據。固定 release 為 `session-access-v1-history-fix-140`，正式 URL 為 `http://TAILNET_IP:4317`。需求見[需求文件](session-access-v1-requirements.md)，驗收見[驗收文件](session-access-v1-verification.md)。
 
 大型 session 400 相容性修正已實作；隔離 23 files／140 tests、16 browser cases 通過。修正版已部署；130／14 基準保留為前一部署歷史。實際個人大 session 載入效果仍待 Owner 確認。
 

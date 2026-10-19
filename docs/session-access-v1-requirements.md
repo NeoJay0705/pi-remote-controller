@@ -1,6 +1,8 @@
 # Session Access v1：免交接 Web／TUI 接續與原生 JSONL 按頁讀取
 
-狀態：**大型 session 400 相容性修正版已部署；部署檢查通過；實際個人大 session 載入效果仍待 Owner 確認。真 Pi/TUI/模型完整端到端未驗證。**本文件保留本期需求，並記錄目前部署與驗證邊界。當前固定 release 為 `session-access-v1-history-fix-140`，正式 URL 為 <http://TAILNET_IP:4317>。設計見[設計文件](session-access-v1-design.md)，驗收見[驗收文件](session-access-v1-verification.md)。
+公開版本已將主機位址與個人路徑匿名化；下列歷史驗證結果不因此改變。
+
+狀態：**大型 session 400 相容性修正版已部署；部署檢查通過；實際個人大 session 載入效果仍待 Owner 確認。真 Pi/TUI/模型完整端到端未驗證。**本文件保留本期需求，並記錄目前部署與驗證邊界。當前固定 release 為 `session-access-v1-history-fix-140`，正式 URL 為 `http://TAILNET_IP:4317`。設計見[設計文件](session-access-v1-design.md)，驗收見[驗收文件](session-access-v1-verification.md)。
 
 大型 session 400 相容性修正已實作；隔離 23 files／140 tests、16 browser cases 通過。修正版已部署；此次部署前的 130／14 基準保留為前一部署歷史。尚未在 Owner 個人檔案確認觸發點或載入效果。
 
@@ -42,4 +44,4 @@
 
 歷史驗收須涵蓋至少 110 MiB 合成 JSONL 的列出、加入與翻頁，並量測 memory 有界；多分支、compaction、Unicode、CRLF、不完整尾行、append、truncate、replace、過大單筆 entry 與錯誤可見性。唯讀列出／加入／分頁階段須確認原檔 hash 不變，且沒有新增持久索引或歷史副本。
 
-目前已部署的 release 為 `session-access-v1-history-fix-140`，正式 URL 為 <http://TAILNET_IP:4317>。部署檢查通過。實際個人大 session 載入效果仍待 Owner 確認；真 Pi/TUI/模型完整端到端與個人 session 驗收尚未驗證，且須另行授權。本次文件歸檔不讀取或修改個人 session，也不執行該驗收。
+目前已部署的 release 為 `session-access-v1-history-fix-140`，正式 URL 為 `http://TAILNET_IP:4317`。部署檢查通過。實際個人大 session 載入效果仍待 Owner 確認；真 Pi/TUI/模型完整端到端與個人 session 驗收尚未驗證，且須另行授權。本次文件歸檔不讀取或修改個人 session，也不執行該驗收。

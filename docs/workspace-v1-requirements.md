@@ -1,5 +1,7 @@
 # Pi Remote Workspace — v1 需求基線
 
+公開版本已將主機位址與個人路徑匿名化；下列歷史驗證結果不因此改變。
+
 ## 1. 文件狀態與目標
 
 狀態：需求已足夠進入系統設計。本文不代表系統已實作或驗收。
@@ -219,7 +221,7 @@ Pi RPC 可轉送部分 extension UI，例如 select、confirm、input 與 editor
 
 本次需求核對以本機全域安裝的 `@earendil-works/pi-coding-agent@1.3.0` 為基準，不是其他 repo 的 `node_modules` 版本。
 
-核對的安裝目錄為 `/home/<user>/.nvm/versions/node/v22.21.1/lib/node_modules/@earendil-works/pi-coding-agent/`。目前 `PATH` 解析到的 `pi` 符號連結指向此套件的 `dist/bundle/cli.js`。版本依據是該套件的 `package.json`。
+核對的安裝目錄為 `$HOME/.nvm/versions/node/v22.21.1/lib/node_modules/@earendil-works/pi-coding-agent/`。目前 `PATH` 解析到的 `pi` 符號連結指向此套件的 `dist/bundle/cli.js`。版本依據是該套件的 `package.json`。
 
 已核對此版本隨附的 RPC 文件、型別與相關實作。`steer`、`follow_up`、`clear_queue`、`abort` 及原生執行生命週期契約仍適用。`abort` 實作包含中止 retry、compaction 與 branch summary，並等待 session idle。這不表示任意 extension、subagent 或獨立背景程序的停止已經驗證。
 

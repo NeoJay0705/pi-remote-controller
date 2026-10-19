@@ -1,8 +1,10 @@
 # Session Access v1：免交接 Web／TUI 接續與原生 JSONL 按頁讀取
 
+公開版本已將主機位址與個人路徑匿名化；下列歷史驗證結果不因此改變。
+
 > 最新安全修補驗證為 142 tests／23 files、16 browser cases。正式服務已依 Owner 授權停止，本次修補未部署。範圍、限制與證據見[安全審查紀錄](security-review.md)。以下 140 tests 等數字均為該階段歷史記錄。
 
-狀態：**大型 session 400 相容性修正版已部署；部署檢查通過；實際個人大 session 載入效果仍待 Owner 確認。真 Pi/TUI/模型完整端到端未驗證。**本表逐案記錄已執行離線範圍與未驗部分。固定 release 為 `session-access-v1-history-fix-140`，正式 URL 為 <http://TAILNET_IP:4317>。需求見[需求文件](session-access-v1-requirements.md)，設計見[設計文件](session-access-v1-design.md)。
+狀態：**大型 session 400 相容性修正版已部署；部署檢查通過；實際個人大 session 載入效果仍待 Owner 確認。真 Pi/TUI/模型完整端到端未驗證。**本表逐案記錄已執行離線範圍與未驗部分。固定 release 為 `session-access-v1-history-fix-140`，正式 URL 為 `http://TAILNET_IP:4317`。需求見[需求文件](session-access-v1-requirements.md)，設計見[設計文件](session-access-v1-design.md)。
 
 大型 session 400 相容性修正已實作；隔離 23 files／140 tests、16 browser cases 通過，且已完成部署。實際個人大 session 的觸發點與載入效果尚未在 Owner 檔案確認。原有 130／14 與 97／12 基準、部署成功歷史及舊部署 harness 的 snapshot metadata 檢查失敗歷史均保留。
 
@@ -40,7 +42,7 @@ Parser 超過 metadata 保留預算時，會安全省略 metadata，並保留 `t
 
 以下內容記錄前一部署狀態，不代表目前 release。
 
-Session Access v1 已部署於固定 release `session-access-v1-ready-130`，正式 URL 為 <http://TAILNET_IP:4317>。部署前已取得 Owner 授權正常重啟。舊服務 PID `21412`、starttime `942719935` 及其 children 均已退出，port 曾確認關閉；之後才更新 atomic pointer 並啟動服務。新服務 PID 為 `54786`、starttime `944935964`，只在 `TAILNET_IP:4317` 監聽。19 個新 release 檔案逐一 hash 比對已驗證的 copy，內容一致。該次部署結束時服務保持運行。
+Session Access v1 已部署於固定 release `session-access-v1-ready-130`，正式 URL 為 `http://TAILNET_IP:4317`。部署前已取得 Owner 授權正常重啟。舊服務 PID `21412`、starttime `942719935` 及其 children 均已退出，port 曾確認關閉；之後才更新 atomic pointer 並啟動服務。新服務 PID 為 `54786`、starttime `944935964`，只在 `TAILNET_IP:4317` 監聽。19 個新 release 檔案逐一 hash 比對已驗證的 copy，內容一致。該次部署結束時服務保持運行。
 
 正式 URL 的 desktop `1365x1000` 與 mobile `390x844` 唯讀 UI 檢查均通過。畫面顯示 16 個 projects、2 個 profiles、native ID、cwd、sessionDir、command、SSE、draft 與寫入警語；沒有 handoff 控制項或 Owner badge。僅指定合成 workspace session 讀取 history。四個 session 與 22 筆 operation metadata 保持不變；檢查期間沒有 operation POST 或 new-session POST。個人 JSONL 僅做 stat。三個資產的 SHA-256 與 release manifest 相符。Token、config、source、rootdist 與兩個 release 的 hashes 均未變；本文件更新是預期的文件差異。服務未停止。
 
@@ -50,7 +52,7 @@ Session Access v1 已部署於固定 release `session-access-v1-ready-130`，正
 
 ## 本次部署：session-access-v1-history-fix-140
 
-大型 session 400 相容性修正版已部署。當前 release 為 `session-access-v1-history-fix-140`，服務維持運行於 <http://TAILNET_IP:4317>。重啟報告記錄舊 PID `54786`／starttime `944935964` 與 child `5439`／starttime `945111926` 已退出、port 關閉後才 atomic 更新 pointer；新 PID `51533`／starttime `945568884` 是 `TAILNET_IP:4317` 唯一 listener。
+大型 session 400 相容性修正版已部署。當前 release 為 `session-access-v1-history-fix-140`，服務維持運行於 `http://TAILNET_IP:4317`。重啟報告記錄舊 PID `54786`／starttime `944935964` 與 child `5439`／starttime `945111926` 已退出、port 關閉後才 atomic 更新 pointer；新 PID `51533`／starttime `945568884` 是 `TAILNET_IP:4317` 唯一 listener。
 
 報告驗證 6 sessions／24 operations ledger 完全不變，部署後 sessions 均 released，queue/dialog 為 0。Index、JS、CSS 三個資產 SHA-256 符合新 manifest。Owner HOME/environment 保持。sources、config、token、root dist 與所有舊 releases 的 before/after hash 不變。新 19 檔固定 release 來自已驗證隔離 copydist。六個 root dist 檔案的非預期差異事故仍如前文保留；本次部署範圍未改動它們，不代表前輪沒有事故。前輪 scope 失敗記錄維持失敗，沒有改寫為成功。
 
@@ -70,7 +72,7 @@ Session Access v1 已部署於固定 release `session-access-v1-ready-130`，正
 
 此獨立預實驗使用真 Pi RPC，並由另一個 `SessionManager` 模擬外部 writer。RPC cache 在同路徑切換前仍排除外部 marker；同 path switch 成功且 `cancelled=false` 後讀到新 entry。原生 session ID、檔案路徑與 RPC PID 保持不變，送出 prompt 數為 0。這證明受控預實驗的同路徑重新載入結果，不是完整真 TUI → Web 端到端驗收。
 
-- 報告：[repo 相對路徑](../.test-artifacts/handoff-evaluation/dce2c8ed-700c-4cbe-983c-616ae3fac962/report.json)；[絕對路徑](/home/<user>/repos/pi-remote-controller/.test-artifacts/handoff-evaluation/dce2c8ed-700c-4cbe-983c-616ae3fac962/report.json)。
+- 報告：[repo 相對路徑](../.test-artifacts/handoff-evaluation/dce2c8ed-700c-4cbe-983c-616ae3fac962/report.json)。
 - 報告記錄 `providerRequestsObserved: 0`，但該欄位不是獨立網路監測，不以此宣稱網路驗收。
 - 報告記錄 RPC child exited、exit code 0。此為該預實驗記錄，不代表本期新功能已驗收。
 
