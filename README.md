@@ -6,7 +6,13 @@ Pi 原生 session 的同源遠端介面。Linux 主機需使用 Node.js 22.19 �
 
 ## 正式部署與登入
 
-新部署前，請由主機管理者選擇獨立的 build/release 目錄及私有設定、資料目錄。不要在正在運行的 release 內建置或覆寫檔案。此 repository 不提供通用部署 CLI，也不提供主機專用的啟停腳本。
+新部署前，請由主機管理者選擇獨立的 build/release 目錄及私有設定、資料目錄。不要在正在運行的 release 內建置或覆寫檔案。此 repository 不提供通用部署 CLI。功能驗收由使用者負責。既有且符合 instance 契約的服務，只有在使用者授權，且操作者確認沒有需要保留的進行中工作後，才執行：
+
+```bash
+npm run service:restart
+```
+
+命令固定依序正常停止 `.test-artifacts/live-instance`、在 repository 原地執行 `npm run build`，再啟動同一 instance。建置期間服務停止；建置失敗時服務保持停止。失敗時停止並回報階段，不重試或 rollback。
 
 在獨立 build 目錄安裝與建置：
 

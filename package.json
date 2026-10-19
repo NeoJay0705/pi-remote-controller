@@ -13,6 +13,7 @@
     "dev": "tsx src/server/main.ts",
     "server:dev": "tsx src/server/main.ts",
     "start": "node dist/server/main.js",
+    "service:restart": "bash scripts/service-restart.sh",
     "tui": "node dist/cli/main.js",
     "test": "node scripts/test-env.mjs vitest",
     "test:e2e": "node scripts/test-env.mjs playwright",
