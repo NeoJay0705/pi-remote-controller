@@ -66,21 +66,19 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
 
   const draft = page.getByLabel("訊息草稿");
   await draft.fill("hold:queue-case");
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Prompt" }).click();
   await expect
     .poll(async () => (await getSnapshot()).runtimeState)
     .toBe("running");
 
-  await page.getByLabel("操作模式").selectOption("steer");
   await draft.fill("steer item");
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Steering" }).click();
   await expect
     .poll(async () => (await getSnapshot()).queue)
     .toEqual([{ kind: "steer", text: "steer item" }]);
 
-  await page.getByLabel("操作模式").selectOption("follow_up");
   await draft.fill("follow item");
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Follow-up" }).click();
   await expect
     .poll(async () => (await getSnapshot()).queue)
     .toEqual([
@@ -218,9 +216,8 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
     .toEqual(["released", "tui"]);
   expect((await getSnapshot()).nativeId).toBe(nativeId);
 
-  await page.getByLabel("操作模式").selectOption("prompt");
   await draft.fill("fast");
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Prompt" }).click();
   await expect
     .poll(async () => {
       const snapshot = await getSnapshot();

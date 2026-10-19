@@ -68,7 +68,7 @@ test("login and create managed native session", async ({ page }) => {
   expect(missing.status()).toBe(404);
   expect(missing.headers()["content-type"]).toMatch(/application\/json/);
   await page.getByLabel("訊息草稿").fill("normal");
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Prompt" }).click();
   await expect(page.getByText("fake-model")).toBeVisible();
   await expect(
     page.getByText("streaming response", { exact: true }),

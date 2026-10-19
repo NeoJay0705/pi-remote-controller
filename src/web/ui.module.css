@@ -122,12 +122,43 @@
   color: var(--ink);
   margin-left: 4px;
 }
-.chat {
+.sessionInfo {
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line);
+  color: #514b40;
+  font-size: 12px;
+}
+.sessionInfo > *:not(summary) {
+  margin-right: 14px;
+}
+.sessionInfo summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.sessionNotices {
+  padding: 8px 22px;
+  color: #681c18;
+}
+.sessionNotices p {
+  margin: 4px 0;
+}
+.chatViewport {
+  position: relative;
   flex: 1;
   min-height: 100px;
+  display: flex;
+}
+.chat {
+  flex: 1;
+  overflow-anchor: none;
+  min-height: 0;
   overflow: auto;
   padding: 20px clamp(14px, 4vw, 56px);
   min-width: 0;
+}
+.chatContent {
+  min-height: 100%;
+  display: flow-root;
 }
 .empty {
   color: #514b40;
@@ -172,6 +203,13 @@
 .older {
   display: block;
   margin: 0 auto 20px;
+}
+.backToLatest {
+  position: absolute;
+  right: 16px;
+  bottom: 8px;
+  z-index: 2;
+  margin: 0;
 }
 .cleared,
 .toolCard {
@@ -248,7 +286,8 @@
   float: right;
 }
 .menu,
-.mobileClose {
+.mobileClose,
+.overlay {
   display: none;
 }
 .login {
@@ -307,6 +346,14 @@
   cursor: pointer;
 }
 @media (max-width: 700px) {
+  .overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+    border: 0;
+    background: #0006;
+  }
   .sidebar {
     display: none;
   }
@@ -344,9 +391,6 @@
   }
   .draft {
     flex-wrap: wrap;
-  }
-  .draft select {
-    width: 100%;
   }
   .draft textarea {
     flex-basis: 100%;

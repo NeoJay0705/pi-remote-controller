@@ -113,7 +113,7 @@ test("session switching survives offline completion and page reconnect", async (
     .poll(async () => (await snapshotA()).runtimeState)
     .toBe("released");
   await page.getByLabel("訊息草稿").fill(`hold:${gateName}`);
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Prompt" }).click();
   await expect
     .poll(async () => (await snapshotA()).runtimeState)
     .toBe("running");

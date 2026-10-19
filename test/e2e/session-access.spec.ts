@@ -115,6 +115,10 @@ test("recovers from initial history load failure without losing the draft", asyn
       ).status(),
     )
     .toBe(200);
+  await expect(page.getByRole("alert")).toContainText(
+    "歷史讀取失敗（invalid-record）；讀取器無法處理部分紀錄。",
+  );
+  await page.getByRole("button", { name: "關閉 Session 錯誤" }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(operationRequests).toHaveLength(0);
 });
@@ -241,6 +245,10 @@ test("imports and appends to native sessions without losing external history", a
   await expect(page.getByText(`App ID：${imported!.id}`)).toBeVisible();
   await expect(
     page.getByText(`cwd ${descriptor.cwd}`, { exact: false }),
+  ).toBeHidden();
+  await page.getByText("Session 資訊").click();
+  await expect(
+    page.getByText(`cwd ${descriptor.cwd}`, { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByText(`Session dir ${descriptor.sessionDir}`, { exact: false }),
@@ -253,6 +261,8 @@ test("imports and appends to native sessions without losing external history", a
   await expect(page.getByRole("note")).toContainText(
     "請勿讓 Web 與原生 Pi 同時寫入",
   );
+  await page.getByText("Session 資訊").click();
+  await expect(page.getByRole("note")).toBeHidden();
   await expect(page.getByRole("button", { name: "交接 TUI" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Claim 回 Web" })).toHaveCount(
     0,
@@ -294,7 +304,7 @@ test("imports and appends to native sessions without losing external history", a
   expect(operationRequests).toHaveLength(0);
 
   await page.getByLabel("訊息草稿").fill("fast");
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Prompt" }).click();
   await expect(page.getByText("fast", { exact: true })).toBeVisible();
   await expect
     .poll(async () => {

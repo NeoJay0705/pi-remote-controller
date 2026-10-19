@@ -50,9 +50,13 @@ export function mergeActiveHistory(
   for (const entry of page) result.set(entry.id, entry);
   return [...result.values()];
 }
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(
+  path: string,
+  init?: RequestInit,
+  notifyAuthExpired = true,
+): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", ...init });
-  if (response.status === 401)
+  if (response.status === 401 && notifyAuthExpired)
     window.dispatchEvent(new Event("prw-auth-expired"));
   if (!response.ok) {
     let code = "";
@@ -83,7 +87,12 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ token }),
     }),
-  me: () => request<{ authenticated: true }>("/api/v1/auth/me"),
+  me: (notifyAuthExpired = true) =>
+    request<{ authenticated: true }>(
+      "/api/v1/auth/me",
+      undefined,
+      notifyAuthExpired,
+    ),
   logout: () =>
     request<void>("/api/v1/auth/logout", {
       method: "POST",

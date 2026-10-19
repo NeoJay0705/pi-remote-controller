@@ -87,7 +87,7 @@ test("subagent snapshots remain request-scoped, safe, and recoverable", async ({
 
   const demo = `tools-demo:${nonce}`;
   await page.getByLabel("訊息草稿").fill(demo);
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Prompt" }).click();
   await expect.poll(() => requestFor(demo)).toBeTruthy();
   const demoRequest = (await requestFor(demo))!;
   const demoGroup = page.locator(`[data-request-id="${demoRequest}"]`);
@@ -124,7 +124,7 @@ test("subagent snapshots remain request-scoped, safe, and recoverable", async ({
   const simpleNonce = randomUUID();
   const simple = `tools-simple:${simpleNonce}`;
   await page.getByLabel("訊息草稿").fill(simple);
-  await page.getByRole("button", { name: "送出" }).click();
+  await page.getByRole("button", { name: "Prompt" }).click();
   await expect.poll(() => requestFor(simple)).toBeTruthy();
   const simpleRequest = (await requestFor(simple))!;
   expect(simpleRequest).not.toBe(demoRequest);

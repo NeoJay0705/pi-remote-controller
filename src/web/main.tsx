@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createRoot } from "react-dom/client";
 import type {
   OperationKind,
@@ -22,6 +28,7 @@ import {
 import { reconstructStreamEvent, resetStream } from "./streaming.js";
 import { DialogPanel } from "./DialogPanel.js";
 import { copyText, createOperationId } from "./browser-support.js";
+import { canSubmitMessage, type MessageKind } from "./session-ui.js";
 import styles from "./ui.module.css";
 import "./style.css";
 
@@ -49,7 +56,8 @@ type SavedReceipt = {
 function App() {
   const [authenticated, setAuthenticated] = useState(false),
     [token, setToken] = useState(""),
-    [error, setError] = useState(""),
+    [globalError, setGlobalError] = useState(""),
+    [sessionErrors, setSessionErrors] = useState<Record<string, string[]>>({}),
     [projects, setProjects] = useState<Project[]>([]),
     [profiles, setProfiles] = useState<Profile[]>([]),
     [sessions, setSessions] = useState<Session[]>([]),
@@ -70,7 +78,6 @@ function App() {
     [partial, setPartial] = useState(""),
     [connected, setConnected] = useState(false),
     [drafts, setDrafts] = useState<Record<string, string>>({}),
-    [mode, setMode] = useState<"prompt" | "steer" | "follow_up">("prompt"),
     [busy, setBusy] = useState(false),
     [receipts, setReceipts] = useState<SavedReceipt[]>(() => {
       try {
@@ -86,7 +93,46 @@ function App() {
     [liveTools, setLiveTools] = useState<LiveToolsState>(emptyLiveTools),
     [notices, setNotices] = useState<string[]>([]),
     [mobileOpen, setMobileOpen] = useState(false),
-    [manualCopy, setManualCopy] = useState<string>();
+    [manualCopy, setManualCopy] = useState<string>(),
+    [isPinned, setIsPinned] = useState(true),
+    [isMobile, setIsMobile] = useState(
+      () =>
+        typeof window !== "undefined" &&
+        window.matchMedia("(max-width: 700px)").matches,
+    );
+  const menuRef = useRef<HTMLButtonElement>(null),
+    closeRef = useRef<HTMLButtonElement>(null),
+    chatRef = useRef<HTMLElement>(null),
+    chatContentRef = useRef<HTMLDivElement>(null),
+    pinned = useRef(true),
+    lastSessionForScroll = useRef(""),
+    previousMobileOpen = useRef(false),
+    pendingAnchor = useRef<
+      | {
+          sessionId: string;
+          generation: number;
+          scrollTop: number;
+          scrollHeight: number;
+        }
+      | undefined
+    >(undefined);
+  const reportSessionError = (id: string, message: string) => {
+    if (!id) return;
+    setSessionErrors((old) => ({
+      ...old,
+      [id]: [...(old[id] ?? []), message].slice(-10),
+    }));
+  };
+  const canSend = (kind: MessageKind, draft: string) =>
+    canSubmitMessage({
+      kind,
+      draft,
+      runtimeState: snapshot?.runtimeState,
+      connected,
+      online: navigator.onLine,
+      busy,
+      hasSnapshot: !!snapshot,
+    });
   const generation = useRef(0),
     source = useRef<EventSource | undefined>(undefined),
     abort = useRef<AbortController | undefined>(undefined),
@@ -118,21 +164,37 @@ function App() {
   const login = async () => {
     try {
       await api.login(token);
+      setGlobalError("");
+      setSessionErrors({});
       setToken("");
       setAuthenticated(true);
       await refreshLists();
     } catch (e) {
-      setError((e as Error).message);
+      setGlobalError((e as Error).message);
     }
   };
   useEffect(() => {
-    api
-      .me()
-      .then(async () => {
+    const media = window.matchMedia("(max-width: 700px)");
+    const change = (event: MediaQueryListEvent) => setIsMobile(event.matches);
+    setIsMobile(media.matches);
+    media.addEventListener("change", change);
+    return () => media.removeEventListener("change", change);
+  }, []);
+  useEffect(() => {
+    if (!isMobile && mobileOpen) setMobileOpen(false);
+  }, [isMobile, mobileOpen]);
+  useEffect(() => {
+    api.me(false).then(
+      async () => {
         setAuthenticated(true);
-        await refreshLists();
-      })
-      .catch(() => undefined);
+        try {
+          await refreshLists();
+        } catch (e) {
+          setGlobalError((e as Error).message);
+        }
+      },
+      () => undefined,
+    );
   }, [refreshLists]);
   useEffect(() => {
     if (!authenticated || !project) return;
@@ -161,11 +223,14 @@ function App() {
           !controller.signal.aborted &&
           requestGeneration === nativeGeneration.current
         )
-          setError((e as Error).message);
+          setGlobalError((e as Error).message);
       });
   }, [authenticated, project, sessions]);
   const selectSession = useCallback(async (id: string) => {
     const g = ++generation.current;
+    pinned.current = true;
+    setIsPinned(true);
+    pendingAnchor.current = undefined;
     source.current?.close();
     window.clearTimeout(retryTimer.current);
     abort.current?.abort();
@@ -173,7 +238,6 @@ function App() {
     eventCount.current = 0;
     setSelected(id);
     setSessionLoadFailed(false);
-    setError("");
     setManualCopy(undefined);
     setSnapshot(undefined);
     setEntries([]);
@@ -240,8 +304,8 @@ function App() {
             })
             .catch((e) => {
               if (generationId === generation.current)
-                setError((e as Error).message);
-              setConnected(false);
+                reportSessionError(sessionId, (e as Error).message);
+              if (generationId === generation.current) setConnected(false);
             });
         };
         es.onerror = () => {
@@ -266,7 +330,8 @@ function App() {
               ) {
                 generation.current++;
                 setAuthenticated(false);
-                setError("登入已逾期，請重新登入。");
+                setGlobalError("登入已逾期，請重新登入。");
+                setSessionErrors({});
               }
             },
           );
@@ -293,7 +358,7 @@ function App() {
             } else if (event.type === "rpc")
               handleRpc(event.data, sessionId, generationId);
           } catch {
-            setError("無法解析即時事件；請重新同步。");
+            reportSessionError(sessionId, "無法解析即時事件；請重新同步。");
           }
         };
       };
@@ -301,10 +366,51 @@ function App() {
     } catch (e) {
       if (g === generation.current) {
         setSessionLoadFailed(true);
-        setError((e as Error).message);
+        reportSessionError(id, (e as Error).message);
       }
     }
   }, []);
+  useLayoutEffect(() => {
+    const container = chatRef.current;
+    if (!container) return;
+    const anchor = pendingAnchor.current;
+    if (anchor) {
+      pendingAnchor.current = undefined;
+      if (
+        anchor.sessionId === selected &&
+        anchor.generation === generation.current
+      )
+        container.scrollTop =
+          anchor.scrollTop + container.scrollHeight - anchor.scrollHeight;
+      return;
+    }
+    const newSession = lastSessionForScroll.current !== selected;
+    if (newSession) {
+      lastSessionForScroll.current = selected;
+      pinned.current = true;
+      setIsPinned(true);
+      container.scrollTop = container.scrollHeight;
+    } else if (pinned.current) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [selected, snapshot, entries, partial, liveTools]);
+  useLayoutEffect(() => {
+    if (previousMobileOpen.current && !mobileOpen && isMobile)
+      menuRef.current?.focus();
+    if (mobileOpen && isMobile) closeRef.current?.focus();
+    previousMobileOpen.current = mobileOpen;
+  }, [mobileOpen, isMobile]);
+  useEffect(() => {
+    const container = chatRef.current;
+    const content = chatContentRef.current;
+    if (!container || !content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (pinned.current) container.scrollTop = container.scrollHeight;
+    });
+    observer.observe(container);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [selected, snapshot?.id]);
   useEffect(() => {
     const oldLeaf = previousLeaf.current;
     setLiveTools((state) => reconcileLiveTools(state, entries, oldLeaf));
@@ -400,6 +506,7 @@ function App() {
       }));
   }
   async function sync(id: string, g: number) {
+    if (g !== generation.current) return;
     try {
       const serial = ++syncSerial.current;
       const beforeRevision = revision.current;
@@ -423,7 +530,8 @@ function App() {
       setHistoryIncomplete(h.incomplete);
       setHistoryTruncated(h.truncated);
     } catch (e) {
-      if (g === generation.current) setError((e as Error).message);
+      if (g === generation.current)
+        reportSessionError(id, (e as Error).message);
     }
   }
   useEffect(() => {
@@ -449,7 +557,8 @@ function App() {
       previousLeaf.current = undefined;
       setAuthenticated(false);
       setManualCopy(undefined);
-      setError("登入已逾期，請重新登入。");
+      setGlobalError("登入已逾期，請重新登入。");
+      setSessionErrors({});
     };
     window.addEventListener("prw-auth-expired", expired);
     return () => window.removeEventListener("prw-auth-expired", expired);
@@ -474,6 +583,7 @@ function App() {
       currentAtRequest = entries;
     if (!id || !before) return;
     try {
+      const container = chatRef.current;
       const h = await api.history(id, before);
       if (
         g !== generation.current ||
@@ -491,19 +601,29 @@ function App() {
         h.entries.length === 0 ||
         h.entries.at(-1)?.id === currentFirst.parentId;
       if (h.entries.length && (!pageIsContinuous || !pageConnectsToCurrent)) {
-        setError("較舊歷史不連續；正在重新同步。");
+        reportSessionError(id, "較舊歷史不連續；正在重新同步。");
         await sync(id, g);
         return;
       }
-      if (h.entries.length)
+      if (h.entries.length) {
+        pendingAnchor.current = {
+          sessionId: id,
+          generation: g,
+          scrollTop: container?.scrollTop ?? 0,
+          scrollHeight: container?.scrollHeight ?? 0,
+        };
+        pinned.current = false;
+        setIsPinned(false);
         setEntries((current) => mergeActiveHistory(h.entries, current));
+      }
       setNextBefore(h.continuation ?? h.nextBefore);
       setHistoryIncomplete(h.incomplete);
       setHistoryTruncated(h.truncated);
     } catch (e) {
       if (g === generation.current && rev === refreshRevision.current) {
         const error = e as Error & { code?: string };
-        setError(
+        reportSessionError(
+          id,
           error.code === "reload-required"
             ? "歷史已變更；請重新載入。"
             : error.message,
@@ -527,7 +647,8 @@ function App() {
     } catch (e) {
       if (g === generation.current && rev === refreshRevision.current) {
         const error = e as Error & { code?: string };
-        setError(
+        reportSessionError(
+          id,
           error.code === "reload-required"
             ? "歷史已變更；請重新載入。"
             : error.message,
@@ -549,7 +670,7 @@ function App() {
       await refreshLists();
       await selectSession(s.id);
     } catch (e) {
-      setError((e as Error).message);
+      setGlobalError((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -564,6 +685,8 @@ function App() {
       frozen = text ?? drafts[sessionId] ?? "";
     if (
       !sessionId ||
+      ((kind === "prompt" || kind === "steer" || kind === "follow_up") &&
+        !canSend(kind, frozen)) ||
       busy ||
       !snapshot ||
       snapshot.runtimeState === "blocked" ||
@@ -572,6 +695,12 @@ function App() {
       !navigator.onLine
     )
       return;
+    if (kind === "prompt" || kind === "steer" || kind === "follow_up") {
+      pinned.current = true;
+      setIsPinned(true);
+      if (chatRef.current)
+        chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    }
     setBusy(true);
     let operationId: string | undefined;
     try {
@@ -608,7 +737,7 @@ function App() {
       await sync(sessionId, requestGeneration);
     } catch (e) {
       if (!operationId) {
-        setError((e as Error).message);
+        reportSessionError(sessionId, (e as Error).message);
         setBusy(false);
         return;
       }
@@ -623,12 +752,14 @@ function App() {
             status = "REJECTED";
         }
       }
-      setError((e as Error).message);
+      reportSessionError(sessionId, (e as Error).message);
       setReceipts((old) =>
         old.map((r) => (r.operationId === operationId ? { ...r, status } : r)),
       );
       if (status === "登入逾期") {
         setAuthenticated(false);
+        setGlobalError("登入已逾期，請重新登入。");
+        setSessionErrors({});
         generation.current++;
         source.current?.close();
         window.clearTimeout(timer.current);
@@ -674,9 +805,15 @@ function App() {
   }, []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && e.isComposing) return;
+      if (e.key === "Escape" && mobileOpen && isMobile) {
+        e.preventDefault();
+        e.stopPropagation();
+        setMobileOpen(false);
+        return;
+      }
       if (
         e.key === "Escape" &&
-        !e.isComposing &&
         !document.querySelector('[aria-label="Extension 對話"]') &&
         snapshot?.pendingDialogs?.length === 0 &&
         snapshot?.runtimeState === "running"
@@ -687,7 +824,7 @@ function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [snapshot, selected, busy, connected]);
+  }, [snapshot, selected, busy, connected, mobileOpen, isMobile]);
   if (!authenticated)
     return (
       <main className={styles.login}>
@@ -708,7 +845,7 @@ function App() {
             onChange={(e) => setToken(e.target.value)}
           />
           <button>登入</button>
-          {error && <p role="alert">{error}</p>}
+          {globalError && <p role="alert">{globalError}</p>}
         </form>
       </main>
     );
@@ -720,12 +857,18 @@ function App() {
       ["blocked", "stopping", "releasing"].includes(snapshot.runtimeState);
   return (
     <div className={styles.app}>
-      <aside className={`${styles.sidebar} ${mobileOpen ? styles.open : ""}`}>
+      <aside
+        id="session-sidebar"
+        className={`${styles.sidebar} ${mobileOpen ? styles.open : ""}`}
+      >
         <div className={styles.brand}>
           π <span>Pi Remote</span>
           <button
+            ref={closeRef}
             className={styles.mobileClose}
-            onClick={() => setMobileOpen(false)}
+            onClick={() => {
+              setMobileOpen(false);
+            }}
           >
             關閉
           </button>
@@ -832,6 +975,8 @@ function App() {
               streamState.current = resetStream();
               setPartial("");
               setAuthenticated(false);
+              setSessionErrors({});
+              setGlobalError("");
               setManualCopy(undefined);
               setSessions([]);
             });
@@ -840,9 +985,27 @@ function App() {
           登出
         </button>
       </aside>
-      <main className={styles.main}>
+      {mobileOpen && (
+        <button
+          aria-label="關閉側欄遮罩"
+          className={styles.overlay}
+          onClick={() => {
+            setMobileOpen(false);
+          }}
+        />
+      )}
+      <main
+        className={styles.main}
+        inert={mobileOpen && isMobile ? true : undefined}
+      >
         <header className={styles.header}>
-          <button className={styles.menu} onClick={() => setMobileOpen(true)}>
+          <button
+            ref={menuRef}
+            aria-expanded={mobileOpen}
+            aria-controls="session-sidebar"
+            className={styles.menu}
+            onClick={() => setMobileOpen(true)}
+          >
             ☰
           </button>
           <div>
@@ -870,12 +1033,34 @@ function App() {
             <button onClick={() => setManualCopy(undefined)}>關閉</button>
           </section>
         )}
-        {error && (
-          <div className={styles.error} role="alert">
-            {error}
-            <button onClick={() => setError("")}>關閉</button>
+        {globalError && (
+          <div className={styles.error} role="alert" aria-label="全域錯誤">
+            {globalError}
+            <button onClick={() => setGlobalError("")}>關閉全域錯誤</button>
           </div>
         )}
+        {(sessionErrors[selected] ?? []).map((message, index) => (
+          <div
+            className={styles.error}
+            role="alert"
+            aria-label="Session 錯誤"
+            key={`${index}-${message}`}
+          >
+            {message}
+            <button
+              onClick={() =>
+                setSessionErrors((old) => ({
+                  ...old,
+                  [selected]: (old[selected] ?? []).filter(
+                    (_, i) => i !== index,
+                  ),
+                }))
+              }
+            >
+              關閉 Session 錯誤
+            </button>
+          </div>
+        ))}
         {snapshot && (
           <section className={styles.status}>
             <span>
@@ -890,9 +1075,11 @@ function App() {
             <span>
               Thinking <b>{snapshot.actualThinking || "—"}</b>
             </span>
-            <span>
-              原生 Pi ID <b>{snapshot.nativeId}</b>
-            </span>
+          </section>
+        )}
+        {snapshot && (
+          <details key={selected} className={styles.sessionInfo}>
+            <summary>Session 資訊</summary>
             <span>
               cwd <b>{snapshot.cwd || "—"}</b>{" "}
               {snapshot.cwd && (
@@ -948,132 +1135,169 @@ function App() {
             <span>
               Outcome <b>{snapshot.lastOutcome || "—"}</b>
             </span>
-            {snapshot.lastError && <b>錯誤 {snapshot.lastError}</b>}
+          </details>
+        )}
+        {snapshot && (snapshot.lastError || notices.length > 0) && (
+          <section className={styles.sessionNotices} aria-label="Session 提示">
+            {snapshot.lastError && (
+              <p role="alert">Runtime 錯誤：{snapshot.lastError}</p>
+            )}
             {notices.map((notice, index) => (
-              <span role="status" key={`${index}-${notice}`}>
+              <p role="status" key={`${index}-${notice}`}>
                 {notice}
-              </span>
+              </p>
             ))}
           </section>
         )}
-        <section className={styles.chat}>
-          {!selected ? (
-            <div className={styles.empty}>
-              請選擇既有 session，或建立新的工作階段。
-            </div>
-          ) : !snapshot ? (
-            sessionLoadFailed ? (
+        <section aria-label="對話訊息" className={styles.chatViewport}>
+          <section
+            ref={chatRef}
+            className={styles.chat}
+            onScroll={(event) => {
+              const element = event.currentTarget;
+              pinned.current =
+                element.scrollHeight -
+                  element.scrollTop -
+                  element.clientHeight <=
+                48;
+              setIsPinned(pinned.current);
+            }}
+          >
+            {!selected ? (
               <div className={styles.empty}>
-                <p>無法載入 session 狀態與歷史</p>
-                <button onClick={() => void selectSession(selected)}>
-                  重試載入
-                </button>
+                請選擇既有 session，或建立新的工作階段。
               </div>
+            ) : !snapshot ? (
+              sessionLoadFailed ? (
+                <div className={styles.empty}>
+                  <p>無法載入 session 狀態與歷史</p>
+                  <button onClick={() => void selectSession(selected)}>
+                    重試載入
+                  </button>
+                </div>
+              ) : (
+                <div className={styles.empty}>同步 session 狀態與歷史…</div>
+              )
             ) : (
-              <div className={styles.empty}>同步 session 狀態與歷史…</div>
-            )
-          ) : (
-            <>
-              {historyIncomplete && entries.length === 0 && (
-                <p role="status">
-                  歷史讀取未完成；這不是空 session，也不代表已讀取完成。
-                </p>
-              )}
-              {(historyTruncated ||
-                entries.some((entry) => entry.truncated)) && (
-                <p role="status">內容已截斷；可按需讀取較完整預覽。</p>
-              )}
-              {entries
-                .filter((entry) => entry.truncated)
-                .map((entry) => (
-                  <p role="status" key={`truncated-${entry.id}`}>
-                    歷史項目 {entry.id}：內容已截斷；可按需讀取較完整預覽。
-                  </p>
-                ))}
-              {historyIncomplete && (
-                <button
-                  className={styles.older}
-                  disabled={!nextBefore}
-                  onClick={() => void loadOlder()}
-                >
-                  繼續讀取歷史
-                </button>
-              )}
-              {!historyIncomplete && (
-                <button
-                  className={styles.older}
-                  disabled={!nextBefore}
-                  onClick={() => void loadOlder()}
-                >
-                  載入較舊歷史
-                </button>
-              )}
-              <button
-                className={styles.older}
-                disabled={previewLoading}
-                onClick={() => void refreshHistory(65536)}
-              >
-                重新載入最新頁（較完整預覽）
-              </button>
-              <Conversation
-                entries={entries}
-                live={liveTools.tools}
-                omitted={liveTools.omitted}
-                partial={partial}
-              />
-              {snapshot.queue.length > 0 && (
-                <details className={styles.cleared} open>
-                  <summary>等待中的佇列（{snapshot.queue.length}）</summary>
-                  {snapshot.queue.map((q, i) => (
-                    <div key={`${q.kind}-${i}`}>
-                      <b>{q.kind === "steer" ? "Steering" : "Follow-up"}</b>
-                      <pre>{q.text}</pre>
-                    </div>
-                  ))}
-                </details>
-              )}
-              {snapshot.cleared.length > 0 && (
-                <details className={styles.cleared}>
-                  <summary>已清除佇列（不會自動重送）</summary>
-                  {snapshot.cleared.map((q, i) => (
-                    <div key={i}>
-                      <b>{q.kind}</b>
-                      <pre>{q.text}</pre>
-                      <button
-                        onClick={() => {
-                          const requestGeneration = generation.current;
-                          void copyText(q.text).then((copied) => {
-                            if (
-                              !copied &&
-                              requestGeneration === generation.current
-                            )
-                              setManualCopy(q.text);
-                          });
-                        }}
-                      >
-                        複製
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (
-                            confirm("將內容加入目前草稿？原草稿會保留在前面。")
-                          )
-                            setDrafts((old) => {
-                              const current = old[selected] ?? "";
-                              return {
-                                ...old,
-                                [selected]: `${current}${current ? "\n" : ""}${q.text}`,
-                              };
-                            });
-                        }}
-                      >
-                        加入草稿
-                      </button>
-                    </div>
-                  ))}
-                </details>
-              )}
-            </>
+              <>
+                <div ref={chatContentRef} className={styles.chatContent}>
+                  {historyIncomplete && entries.length === 0 && (
+                    <p role="status">
+                      歷史讀取未完成；這不是空 session，也不代表已讀取完成。
+                    </p>
+                  )}
+                  {(historyTruncated ||
+                    entries.some((entry) => entry.truncated)) && (
+                    <p role="status">內容已截斷；可按需讀取較完整預覽。</p>
+                  )}
+                  {entries
+                    .filter((entry) => entry.truncated)
+                    .map((entry) => (
+                      <p role="status" key={`truncated-${entry.id}`}>
+                        歷史項目 {entry.id}：內容已截斷；可按需讀取較完整預覽。
+                      </p>
+                    ))}
+                  {historyIncomplete && (
+                    <button
+                      className={styles.older}
+                      disabled={!nextBefore}
+                      onClick={() => void loadOlder()}
+                    >
+                      繼續讀取歷史
+                    </button>
+                  )}
+                  {!historyIncomplete && (
+                    <button
+                      className={styles.older}
+                      disabled={!nextBefore}
+                      onClick={() => void loadOlder()}
+                    >
+                      載入較舊歷史
+                    </button>
+                  )}
+                  <button
+                    className={styles.older}
+                    disabled={previewLoading}
+                    onClick={() => void refreshHistory(65536)}
+                  >
+                    重新載入最新頁（較完整預覽）
+                  </button>
+                  <Conversation
+                    entries={entries}
+                    live={liveTools.tools}
+                    omitted={liveTools.omitted}
+                    partial={partial}
+                  />
+                  {snapshot.queue.length > 0 && (
+                    <details className={styles.cleared} open>
+                      <summary>等待中的佇列（{snapshot.queue.length}）</summary>
+                      {snapshot.queue.map((q, i) => (
+                        <div key={`${q.kind}-${i}`}>
+                          <b>{q.kind === "steer" ? "Steering" : "Follow-up"}</b>
+                          <pre>{q.text}</pre>
+                        </div>
+                      ))}
+                    </details>
+                  )}
+                  {snapshot.cleared.length > 0 && (
+                    <details className={styles.cleared}>
+                      <summary>已清除佇列（不會自動重送）</summary>
+                      {snapshot.cleared.map((q, i) => (
+                        <div key={i}>
+                          <b>{q.kind}</b>
+                          <pre>{q.text}</pre>
+                          <button
+                            onClick={() => {
+                              const requestGeneration = generation.current;
+                              void copyText(q.text).then((copied) => {
+                                if (
+                                  !copied &&
+                                  requestGeneration === generation.current
+                                )
+                                  setManualCopy(q.text);
+                              });
+                            }}
+                          >
+                            複製
+                          </button>
+                          <button
+                            onClick={() => {
+                              if (
+                                confirm(
+                                  "將內容加入目前草稿？原草稿會保留在前面。",
+                                )
+                              )
+                                setDrafts((old) => {
+                                  const current = old[selected] ?? "";
+                                  return {
+                                    ...old,
+                                    [selected]: `${current}${current ? "\n" : ""}${q.text}`,
+                                  };
+                                });
+                            }}
+                          >
+                            加入草稿
+                          </button>
+                        </div>
+                      ))}
+                    </details>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+          {selected && snapshot && !isPinned && (
+            <button
+              className={`${styles.older} ${styles.backToLatest}`}
+              onClick={() => {
+                pinned.current = true;
+                setIsPinned(true);
+                if (chatRef.current)
+                  chatRef.current.scrollTop = chatRef.current.scrollHeight;
+              }}
+            >
+              回到最新
+            </button>
           )}
         </section>
         {snapshot?.pendingDialogs?.length ? (
@@ -1117,21 +1341,6 @@ function App() {
               )}
             </div>
             <div className={styles.draft}>
-              <select
-                aria-label="操作模式"
-                value={mode}
-                onChange={(e) => setMode(e.target.value as typeof mode)}
-              >
-                <option value="prompt" disabled={running}>
-                  Prompt
-                </option>
-                <option value="steer" disabled={!running}>
-                  Steering
-                </option>
-                <option value="follow_up" disabled={!running}>
-                  Follow-up
-                </option>
-              </select>
               <textarea
                 aria-label="訊息草稿"
                 value={drafts[selected] ?? ""}
@@ -1147,24 +1356,32 @@ function App() {
                   if (
                     (e.ctrlKey || e.metaKey) &&
                     e.key === "Enter" &&
-                    !e.nativeEvent.isComposing
+                    !e.nativeEvent.isComposing &&
+                    canSend("prompt", drafts[selected] ?? "")
                   ) {
                     e.preventDefault();
-                    void submit(mode);
+                    void submit("prompt");
                   }
                 }}
-                placeholder="輸入訊息；Ctrl/Cmd + Enter 送出"
+                placeholder="輸入訊息；Ctrl/Cmd + Enter 僅送出 Prompt"
               />
               <button
-                disabled={
-                  locked ||
-                  !(drafts[selected] ?? "").trim() ||
-                  (running && mode === "prompt") ||
-                  (!running && mode !== "prompt")
-                }
-                onClick={() => void submit(mode)}
+                disabled={!canSend("prompt", drafts[selected] ?? "")}
+                onClick={() => void submit("prompt")}
               >
-                送出
+                Prompt
+              </button>
+              <button
+                disabled={!canSend("steer", drafts[selected] ?? "")}
+                onClick={() => void submit("steer")}
+              >
+                Steering
+              </button>
+              <button
+                disabled={!canSend("follow_up", drafts[selected] ?? "")}
+                onClick={() => void submit("follow_up")}
+              >
+                Follow-up
               </button>
             </div>
           </section>
