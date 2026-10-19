@@ -159,6 +159,87 @@ describe("bounded native JSONL reader", () => {
     expect(seen).toContain("e108");
     expect(seen).toContain("e109");
   });
+  it("keeps an older retained message intact across oversized appended tool results", async () => {
+    const { dir, file, project } = await fixture();
+    const oldText = "u".repeat(4096);
+    const rows = [
+      { type: "session", version: 3, id: "native", cwd: dir },
+      {
+        type: "message",
+        id: "old",
+        parentId: null,
+        message: { role: "user", content: [{ type: "text", text: oldText }] },
+      },
+    ];
+    await writeFile(file, `${rows.map(JSON.stringify).join("\n")}\n`);
+    const initial = await readNativePage(file, project, undefined, 100);
+    const initialOld = initial.entries.find((entry) => entry.id === "old")!;
+    expect(
+      (initialOld.message as { content: { type: string; text: string }[] })
+        .content[0]!.text,
+    ).toBe(oldText);
+    expect(initialOld.truncated).not.toBe(true);
+
+    const handle = await open(file, "a");
+    try {
+      let parentId = "old";
+      for (let i = 0; i < 12; i++) {
+        const id = `large-tool-${i}`;
+        await handle.write(
+          `${JSON.stringify({
+            type: "message",
+            id,
+            parentId,
+            message: {
+              role: "toolResult",
+              content: `tool-${i}-${"x".repeat(70 * 1024)}`,
+            },
+          })}\n`,
+        );
+        parentId = id;
+      }
+    } finally {
+      await handle.close();
+    }
+
+    const seen: string[] = [];
+    const oldEntries = [];
+    let cursor: string | undefined;
+    let finished = false;
+    for (let calls = 0; calls < 20 && !finished; calls++) {
+      const page = await readNativePage(file, project, cursor, 100);
+      expect(page.stats.retainedBytes).toBeLessThanOrEqual(
+        Math.floor((1024 * 1024 - 8192) / 6),
+      );
+      expect(
+        Buffer.byteLength(JSON.stringify(page), "utf8"),
+      ).toBeLessThanOrEqual(1024 * 1024);
+      for (const entry of page.entries) {
+        expect(seen).not.toContain(entry.id);
+        seen.push(entry.id);
+        if (entry.id === "old") oldEntries.push(entry);
+      }
+      if (page.incomplete) {
+        expect(page.continuation).toBeDefined();
+        cursor = page.continuation;
+      } else if (page.nextBefore) cursor = page.nextBefore;
+      else finished = true;
+    }
+    expect(finished).toBe(true);
+    expect(seen).toHaveLength(13);
+    expect(new Set(seen)).toEqual(
+      new Set([
+        "old",
+        ...Array.from({ length: 12 }, (_, i) => `large-tool-${i}`),
+      ]),
+    );
+    expect(oldEntries).toHaveLength(1);
+    expect(
+      (oldEntries[0]!.message as { content: { type: string; text: string }[] })
+        .content[0]!.text,
+    ).toBe(oldText);
+    expect(oldEntries[0]!.truncated).not.toBe(true);
+  });
   it("accepts ancestor-preserving append and rejects a new root branch", async () => {
     const a = await fixture();
     const first = await readNativePage(a.file, a.project, undefined, 1);

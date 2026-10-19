@@ -14,6 +14,7 @@ import type { NativeEntry } from "./native-sessions.js";
 const BLOCK = 64 * 1024;
 const HEADER_MAX = 64 * 1024;
 const CURSOR_MAX = 8 * 1024;
+const PAGE_RETAINED_BUDGET = Math.floor((1024 * 1024 - 8192) / 6);
 const KEY = randomBytes(32);
 type FileHandle = Awaited<ReturnType<typeof open>>;
 export type SafeNativeError =
@@ -848,13 +849,7 @@ export async function readNativePage(
           end,
           options.previewBytes,
           budget,
-          Math.max(
-            1024,
-            Math.min(
-              256 * 1024,
-              Math.floor((1024 * 1024 - 8192) / 6) - retainedBytes,
-            ),
-          ),
+          PAGE_RETAINED_BUDGET,
         );
       } catch (e) {
         if ((e as Error).message === "invalid_record")
@@ -882,7 +877,11 @@ export async function readNativePage(
         if (serializedBytes === 0 && !fitEntryResponse(row))
           throw new Error("reload-required");
         const projectedBytes = Buffer.byteLength(JSON.stringify(row), "utf8");
-        if (projectedBytes + serializedBytes + 16 * 1024 > 1024 * 1024) {
+        if (
+          (entries.length > 0 &&
+            retainedBytes + projected.retainedBytes > PAGE_RETAINED_BUDGET) ||
+          projectedBytes + serializedBytes + 16 * 1024 > 1024 * 1024
+        ) {
           Object.assign(scanstate, {
             end: spanEnd,
             lineEnd: spanEnd,
@@ -892,13 +891,13 @@ export async function readNativePage(
           break;
         }
         entries.push(row);
-        truncated ||= projected.truncated;
+        truncated ||= row.truncated === true;
         retainedBytes += projected.retainedBytes;
         serializedBytes += projectedBytes;
         expected = row.parentId as string | null;
         if (
           entries.length >= limit ||
-          retainedBytes >= 1024 * 1024 ||
+          retainedBytes >= PAGE_RETAINED_BUDGET ||
           expected === null
         )
           break;

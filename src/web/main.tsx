@@ -1406,15 +1406,10 @@ function App() {
                   )}
                   {(historyTruncated ||
                     entries.some((entry) => entry.truncated)) && (
-                    <p role="status">內容已截斷；可按需讀取較完整預覽。</p>
+                    <p role="status">
+                      歷史中有項目為有界預覽，部分資料未載入；個別訊息文字不一定遭到裁切。
+                    </p>
                   )}
-                  {entries
-                    .filter((entry) => entry.truncated)
-                    .map((entry) => (
-                      <p role="status" key={`truncated-${entry.id}`}>
-                        歷史項目 {entry.id}：內容已截斷；可按需讀取較完整預覽。
-                      </p>
-                    ))}
                   {historyIncomplete && (
                     <button
                       className={styles.older}
@@ -1437,8 +1432,10 @@ function App() {
                     className={styles.older}
                     disabled={previewLoading}
                     onClick={() => void refreshHistory(65536)}
+                    aria-description="預覽仍有上限；此操作只重新載入最新頁，不保證展開較舊項目。較舊項目請載入歷史。"
+                    title="預覽仍有上限；此操作只重新載入最新頁，不保證展開較舊項目。較舊項目請載入歷史。"
                   >
-                    重新載入最新頁（較完整預覽）
+                    重新載入最新頁（預覽有上限）
                   </button>
                   <Conversation
                     entries={entries}

@@ -60,7 +60,9 @@ export function Conversation({
                 <Message truncated={!!item.truncated}>{item.text}</Message>
               )}
               {!item.text && item.truncated && (
-                <small role="status">內容已截斷；可按需讀取較完整預覽。</small>
+                <small role="status">
+                  此歷史項目為有界預覽，部分資料未載入。
+                </small>
               )}
               {item.tools.map((tool) => (
                 <ToolCard

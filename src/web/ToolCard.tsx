@@ -28,7 +28,7 @@ export function ToolCard({
       <summary>
         <span className={styles.toolBadge}>{tool.name}</span> {tool.purpose} ·{" "}
         <b>{status}</b>
-        {truncated && " · 內容已截斷；可按需讀取較完整預覽"}
+        {truncated && " · 此工具資料為有界預覽，部分資料未載入"}
         {activeSubagent ? " · 父 agent 等待子 agent 回報" : ""}
       </summary>
       {tool.name === "subagent" && (

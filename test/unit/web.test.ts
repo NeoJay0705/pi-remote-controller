@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Message, textContent } from "../../src/web/Message.js";
+import { Conversation } from "../../src/web/Conversation.js";
 import { mergeActiveHistory } from "../../src/web/api.js";
 
 describe("active history merge", () => {
@@ -57,6 +58,35 @@ describe("safe web message rendering", () => {
     expect(malicious).not.toContain("<script");
     expect(image).not.toContain("https://invalid.example");
     expect(image).toContain("圖片省略");
+  });
+  it("shows item-scoped history preview notices without warning on short text", () => {
+    const short = renderToStaticMarkup(
+      createElement(Conversation, {
+        entries: [
+          {
+            id: "short",
+            parentId: null,
+            type: "message",
+            message: { role: "assistant", content: "short text" },
+          },
+        ],
+      }),
+    );
+    expect(short).not.toContain("有界預覽");
+    const preview = renderToStaticMarkup(
+      createElement(Conversation, {
+        entries: [
+          {
+            id: "preview",
+            parentId: null,
+            type: "message",
+            truncated: true,
+            message: { role: "assistant", content: "visible preview" },
+          },
+        ],
+      }),
+    );
+    expect(preview).toContain("此歷史項目為有界預覽，部分資料未載入");
   });
   it("marks truncated text rather than silently dropping it", () => {
     const value = textContent("x".repeat(30001));

@@ -567,6 +567,59 @@ test("message operation browser matrix, connectivity and chat scroll behavior", 
     .toBeLessThanOrEqual(2);
 });
 
+test("history truncation stays entry-scoped and latest-page reload uses the maximum preview", async ({
+  page,
+}) => {
+  const fixture = await installTransport(page);
+  fixture.setHistory([
+    {
+      id: "short-entry",
+      parentId: null,
+      type: "message",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "short message" }],
+      },
+    },
+    {
+      id: "truncated-entry",
+      parentId: "short-entry",
+      type: "message",
+      truncated: true,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "bounded preview" }],
+      },
+    },
+  ]);
+  await loginAndSelect(page);
+  const chat = page.getByRole("region", { name: "對話訊息" });
+  await expect(chat.getByText("short message")).toBeVisible();
+  await expect(chat.getByText("bounded preview")).toBeVisible();
+  const previewNotice = "此歷史項目為有界預覽，部分資料未載入。";
+  await expect(chat.getByText(previewNotice)).toHaveCount(1);
+  const shortEntry = chat.locator('[data-entry-id="short-entry"]');
+  await expect(shortEntry.getByText(previewNotice)).toHaveCount(0);
+  const reloadLatest = chat.getByRole("button", {
+    name: "重新載入最新頁（預覽有上限）",
+  });
+  await expect(reloadLatest).toBeVisible();
+  const limitation =
+    "預覽仍有上限；此操作只重新載入最新頁，不保證展開較舊項目。較舊項目請載入歷史。";
+  await expect(reloadLatest).toHaveAttribute("aria-description", limitation);
+  await expect(reloadLatest).toHaveAttribute("title", limitation);
+  const historyRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return (
+      url.pathname === `/api/v1/sessions/${ids[0]}/history` &&
+      url.searchParams.has("previewBytes")
+    );
+  });
+  await reloadLatest.click();
+  const request = await historyRequest;
+  expect(new URL(request.url()).searchParams.get("previewBytes")).toBe("65536");
+});
+
 test("mobile sidebar resize and session information reset", async ({
   page,
 }) => {

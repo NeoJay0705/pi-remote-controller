@@ -285,6 +285,96 @@ describe("bounded JSON projection", () => {
     expect(result.truncated).toBe(true);
     expect(result.value.details).toBeUndefined();
   });
+  it("does not mark private-only omission, preserves public truncation, and omits signatures", async () => {
+    for (const marker of [
+      '{"role":"system","content":"PRIVATE-START","textSignature":"SIG-START","thinkingSignature":"THINK-SIG-START"}',
+      '{"content":"PRIVATE-END","role":"system","textSignature":"SIG-END","thinkingSignature":"THINK-SIG-END"}',
+    ]) {
+      const short = await parseBoundedJson<JsonObject>(
+        chunks(`{"content":"short public text","block":${marker}}`),
+      );
+      expect(short.value.content).toBe("short public text");
+      expect(short.truncated).toBe(false);
+      expect(JSON.stringify(short.value)).not.toMatch(/PRIVATE-|SIG-/);
+    }
+    const sensitiveLargeSubtree = await parseBoundedJson<JsonObject>(
+      chunks(
+        JSON.stringify({
+          public: "short public text",
+          stderr: Array.from({ length: 140 }, (_, i) => `sensitive-${i}`),
+          signature: { values: Array.from({ length: 140 }, () => "secret") },
+        }),
+      ),
+    );
+    expect(sensitiveLargeSubtree.value.public).toBe("short public text");
+    expect(sensitiveLargeSubtree.truncated).toBe(false);
+    expect(JSON.stringify(sensitiveLargeSubtree.value)).not.toMatch(
+      /sensitive-|secret/,
+    );
+    const publicSibling = await parseBoundedJson<JsonObject>(
+      chunks(
+        `{"public":"${"x".repeat(300)}","private":{"role":"system","content":"PRIVATE"}}`,
+      ),
+      128,
+    );
+    expect(publicSibling.truncated).toBe(true);
+    const longPublic = await parseBoundedJson<JsonObject>(
+      chunks(`{"text":"${"y".repeat(70 * 1024)}"}`),
+    );
+    expect(longPublic.truncated).toBe(true);
+  });
+  it("separates private omission from public truncation when privacy markers are at the end", async () => {
+    const publicThenPrivate = await parseBoundedJson<JsonObject>(
+      chunks(
+        `{"content":"short public","details":{"text":"${"s".repeat(70 * 1024)}","type":"thinking"}}`,
+      ),
+    );
+    expect(publicThenPrivate.value.content).toBe("short public");
+    expect(publicThenPrivate.truncated).toBe(false);
+
+    const privateThenPublic = await parseBoundedJson<JsonObject>(
+      chunks(
+        `{"details":{"type":"thinking","text":"private"},"content":"${"p".repeat(70 * 1024)}"}`,
+      ),
+    );
+    expect(privateThenPublic.truncated).toBe(true);
+
+    for (const block of [
+      `{"text":"${"s".repeat(70 * 1024)}","type":"thinking"}`,
+      `{"type":"thinking","text":"${"s".repeat(70 * 1024)}"}`,
+    ]) {
+      const result = await parseBoundedJson<JsonObject>(
+        chunks(`{"block":${block}}`),
+      );
+      expect(result.truncated).toBe(false);
+      expect(JSON.stringify(result.value)).not.toContain("s".repeat(128));
+    }
+  });
+  it("omits ordinary text and thinking signatures without hiding public content", async () => {
+    const result = await parseBoundedJson<JsonObject>(
+      chunks(
+        JSON.stringify({
+          message: {
+            role: "assistant",
+            content: "public message",
+            textSignature: "text-secret",
+            thinkingSignature: "thinking-secret",
+          },
+          event: {
+            type: "text",
+            text: "public block",
+            signature: "signature-secret",
+          },
+        }),
+      ),
+    );
+    const serialized = JSON.stringify(result.value);
+    expect(serialized).toContain("public message");
+    expect(serialized).toContain("public block");
+    expect(serialized).not.toMatch(
+      /text-secret|thinking-secret|signature-secret/,
+    );
+  });
   it("does not retain system or thinking content", async () => {
     const result = await parseBoundedJson<JsonObject>(
       chunks('{"role":"system","content":"secret","extra":{"x":1}}'),

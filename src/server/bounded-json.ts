@@ -57,6 +57,7 @@ export async function parseBoundedJson<T = unknown>(
     privateRole: boolean;
     privateType: boolean;
     omitted: boolean;
+    truncatedAtStart: boolean;
   }> = [];
   const iterator = (async function* () {
     for await (const chunk of chunks) {
@@ -214,7 +215,14 @@ export async function parseBoundedJson<T = unknown>(
   }
 
   function sensitive(key: string): boolean {
-    return ["thinking", "signature", "stderr", "rawStderr"].includes(key);
+    return [
+      "thinking",
+      "signature",
+      "thinkingSignature",
+      "textSignature",
+      "stderr",
+      "rawStderr",
+    ].includes(key);
   }
   async function value(
     keep: boolean,
@@ -235,12 +243,13 @@ export async function parseBoundedJson<T = unknown>(
       const object = c === "{";
       await take();
       if (depth >= MAX_DEPTH) fail();
-      const frame = {
+      const frame: (typeof frames)[number] = {
         kind: object ? ("object" as const) : ("array" as const),
         count: 0,
         privateRole: false,
         privateType: false,
         omitted: false,
+        truncatedAtStart: truncated,
       };
       frames.push(frame);
       if (keep && charge(16) < 16) keep = false;
@@ -308,11 +317,16 @@ export async function parseBoundedJson<T = unknown>(
             : charge(8, structuralField)
           : 0;
         const canRetain = childKeep && (metadataField || slotBytes === 8);
+        const truncationBeforeSensitiveValue = sensitive(childKey ?? "")
+          ? truncated
+          : undefined;
         const child = await value(
           retainChild && canRetain,
           childKey,
           depth + 1,
         );
+        if (truncationBeforeSensitiveValue !== undefined)
+          truncated = truncationBeforeSensitiveValue;
         if (metadataField && canRetain && typeof child !== "string") {
           frame.omitted = true;
           truncated = true;
@@ -377,7 +391,8 @@ export async function parseBoundedJson<T = unknown>(
             if (id !== undefined && id !== null && typeof id !== "string")
               fail();
           }
-        if (frame.privateType) truncated = true;
+        if (frame.privateRole || frame.privateType)
+          truncated = frame.omitted ? true : frame.truncatedAtStart;
       }
       if (!object && keep) charge(8);
       return result;
