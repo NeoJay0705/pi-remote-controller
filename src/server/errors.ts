@@ -32,6 +32,8 @@ const KNOWN_ERRORS = new Set([
   "session_directory_too_large",
   "invalid_history_query",
   "operation_conflict",
+  "profile_conflict",
+  "session_profile_blocked",
   "storage_error",
   "writer_locked",
   "lease_unavailable",
@@ -94,6 +96,8 @@ const KNOWN_ERRORS = new Set([
   "sync_conflict",
   "sync_cancelled",
   "sync_unconfirmed",
+  "profile_switch_unconfirmed",
+  "rpc_profile_mismatch",
 ]);
 export function isKnownErrorCode(code: unknown): code is string {
   return typeof code === "string" && KNOWN_ERRORS.has(code);
@@ -123,7 +127,9 @@ export function statusForError(
   if (
     code === "closing" ||
     code === "work-budget" ||
-    code === "sync_unconfirmed"
+    code === "sync_unconfirmed" ||
+    code === "profile_switch_unconfirmed" ||
+    code === "rpc_profile_mismatch"
   )
     return 503;
   if (
@@ -143,6 +149,8 @@ export function statusForError(
   if (
     code === "native_session_exists" ||
     code === "operation_conflict" ||
+    code === "profile_conflict" ||
+    code === "session_profile_blocked" ||
     code === "session_busy" ||
     code === "session_idle" ||
     code === "already_claimed" ||

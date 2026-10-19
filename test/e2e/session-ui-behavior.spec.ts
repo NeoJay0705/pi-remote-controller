@@ -14,6 +14,7 @@ function fixtureSnapshot(id: string, runtimeState: State): Snapshot {
     nativeId: `fake-${id.slice(0, 4)}`,
     projectId: "demo",
     profileId: "fake",
+    profileRevision: 0,
     desiredOwner: "web",
     runtimeState,
     actualProvider: "fixture",
@@ -200,6 +201,7 @@ test("message operation browser matrix, connectivity and chat scroll behavior", 
     blocked: [],
     stopping: [],
     releasing: [],
+    reconfiguring: [],
   };
   for (const state of [
     "released",
@@ -209,6 +211,7 @@ test("message operation browser matrix, connectivity and chat scroll behavior", 
     "blocked",
     "stopping",
     "releasing",
+    "reconfiguring",
   ] as const) {
     const blockedTextarea = state === "blocked" || state === "stopping";
     if (state === "blocked") await draft.fill("prepared blocked draft");

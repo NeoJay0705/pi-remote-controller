@@ -18,6 +18,29 @@ import { Buffer } from "node:buffer";
 import { deserialize, serialize } from "node:v8";
 const session = process.argv[process.argv.indexOf("--session") + 1];
 const tuiMode = !process.argv.includes("--mode");
+const flag = (name, fallback) => {
+  const index = process.argv.indexOf(name);
+  return index >= 0 ? process.argv[index + 1] : fallback;
+};
+const argvJournal = process.env.FAKE_PI_ARGV_JOURNAL;
+// Keep the legacy fake response stable unless the opt-in argv journal is enabled.
+const selectedProvider = argvJournal ? flag("--provider", "fake") : "fake";
+const selectedModel = argvJournal
+  ? flag("--model", "fake-model")
+  : "fake-model";
+const selectedThinking = argvJournal ? flag("--thinking", "low") : "low";
+if (argvJournal)
+  appendFileSync(
+    argvJournal,
+    `${JSON.stringify({ event: "spawn", pid: process.pid, argv: process.argv.slice(2) })}\n`,
+  );
+process.once("exit", () => {
+  if (argvJournal)
+    appendFileSync(
+      argvJournal,
+      `${JSON.stringify({ event: "exit", pid: process.pid })}\n`,
+    );
+});
 const records = readFileSync(session, "utf8")
   .trim()
   .split("\n")
@@ -313,10 +336,10 @@ rl.on("line", (line) => {
         sessionFile: session,
         sessionId: cachedRecords[0].id,
         model: {
-          id: reloadModelMismatch ? "mismatch-model" : "fake-model",
-          provider: "fake",
+          id: reloadModelMismatch ? "mismatch-model" : selectedModel,
+          provider: selectedProvider,
         },
-        thinkingLevel: "low",
+        thinkingLevel: selectedThinking,
         isStreaming: streaming,
         isCompacting: false,
         pendingMessageCount: steering.length + followUp.length,

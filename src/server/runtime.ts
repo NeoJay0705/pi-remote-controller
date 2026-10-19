@@ -35,11 +35,14 @@ interface Live {
   epoch: number;
   reloading: boolean;
   eventHandler?: (e: Record<string, unknown>) => void;
+  failureHandler?: (code: string) => void;
+  staged?: boolean;
 }
 export class WorkspaceRuntime extends EventEmitter {
   private live = new Map<string, Live>();
   private starting = new Map<string, Promise<Live>>();
   private closing = false;
+  private switching = new Set<string>();
   private settled = new Map<string, number>();
   constructor(
     readonly config: WorkspaceConfig,
@@ -49,25 +52,53 @@ export class WorkspaceRuntime extends EventEmitter {
   }
   private emitSnapshot(id: string): void {
     const l = this.live.get(id);
-    if (l)
+    if (!l) return;
+    const saved = this.ledger.session(id);
+    if (
+      saved &&
+      !this.switching.has(id) &&
+      this.ledger.unresolvedProfileSwitch(id)
+    ) {
       this.emit(`session:${id}`, {
         type: "snapshot",
         data: {
           ...l.snapshot,
+          profileId: saved.profileId,
+          profileRevision: saved.profileRevision,
+          runtimeState: "blocked",
+          lastError: "profile_switch_unconfirmed",
           queue: l.queue,
           pendingDialogs: [...l.pending.values()],
+          desiredOwner: saved.desiredOwner,
         },
       });
+      return;
+    }
+    this.emit(`session:${id}`, {
+      type: "snapshot",
+      data: {
+        ...l.snapshot,
+        queue: l.queue,
+        pendingDialogs: [...l.pending.values()],
+      },
+    });
   }
   async ensure(record: SessionRecord, explicitClaim = false): Promise<Live> {
     if (this.closing) throw new Error("closing");
+    if (
+      this.switching.has(record.id) ||
+      this.ledger.unresolvedProfileSwitch(record.id)
+    )
+      throw new Error("session_profile_blocked");
     const old = this.live.get(record.id);
     if (old) return old;
     const inFlight = this.starting.get(record.id);
     if (inFlight) return inFlight;
     if (record.desiredOwner !== "web" && !explicitClaim)
       throw new Error("owner_mismatch");
-    const start = this.start(record, explicitClaim);
+    const latest = this.ledger.session(record.id);
+    if (!latest) throw new Error("not_found");
+    const start = this.start(latest, explicitClaim);
     this.starting.set(record.id, start);
     try {
       return await start;
@@ -95,6 +126,7 @@ export class WorkspaceRuntime extends EventEmitter {
         nativeId: record.nativeId,
         projectId: record.projectId,
         profileId: record.profileId,
+        profileRevision: record.profileRevision,
         desiredOwner: record.desiredOwner,
         runtimeState: "starting",
         queue: [],
@@ -121,8 +153,9 @@ export class WorkspaceRuntime extends EventEmitter {
       };
       this.live.set(record.id, live);
       this.bindEvents(record.id, live);
-      rpc.on("failure", (code: string) => {
+      const failureHandler = (code: string) => {
         if (
+          this.live.get(record.id) === live &&
           live!.snapshot.runtimeState !== "releasing" &&
           live!.snapshot.runtimeState !== "blocked"
         ) {
@@ -130,7 +163,9 @@ export class WorkspaceRuntime extends EventEmitter {
           live!.snapshot.lastError = code;
           this.emitSnapshot(record.id);
         }
-      });
+      };
+      live.failureHandler = failureHandler;
+      rpc.on("failure", failureHandler);
       const s = await rpc.command("get_state");
       const state = (
         s.data && typeof s.data === "object" ? s.data : undefined
@@ -616,6 +651,18 @@ export class WorkspaceRuntime extends EventEmitter {
     operationId?: string,
   ): Promise<unknown> {
     if (this.closing) throw new Error("closing");
+    if (this.switching.has(record.id))
+      throw Object.assign(new Error("session_profile_blocked"), {
+        statusCode: 409,
+      });
+    if (input.kind === "change_profile")
+      return this.changeProfile(
+        record,
+        input,
+        operationId ?? input.operationId,
+      );
+    if (this.ledger.unresolvedProfileSwitch(record.id))
+      throw new Error("session_profile_blocked");
     let live = this.live.get(record.id);
     if (input.kind === "claim") {
       if (live)
@@ -861,6 +908,438 @@ export class WorkspaceRuntime extends EventEmitter {
       statusCode: 400,
     });
   }
+  private async changeProfile(
+    record: SessionRecord,
+    input: OperationInput,
+    operationId: string,
+  ): Promise<unknown> {
+    const target = this.config.profiles.find(
+      (profile) => profile.id === input.profileId,
+    );
+    if (!target) throw new Error("invalid_profile");
+    if (
+      typeof input.expectedProfileId !== "string" ||
+      !Number.isSafeInteger(input.expectedProfileRevision) ||
+      (input.expectedProfileRevision ?? -1) < 0
+    )
+      throw new Error("invalid_schema");
+    if (this.starting.has(record.id))
+      throw Object.assign(new Error("session_busy"), { statusCode: 409 });
+    if (this.switching.has(record.id))
+      throw Object.assign(new Error("session_busy"), { statusCode: 409 });
+    if (this.ledger.unresolvedProfileSwitch(record.id, operationId))
+      throw new Error("session_profile_blocked");
+    const current = this.ledger.session(record.id);
+    if (
+      !current ||
+      current.profileId !== input.expectedProfileId ||
+      current.profileRevision !== input.expectedProfileRevision
+    )
+      throw Object.assign(new Error("profile_conflict"), { statusCode: 409 });
+    if (current.desiredOwner !== "web")
+      throw Object.assign(new Error("owner_mismatch"), { statusCode: 409 });
+    const oldLive = this.live.get(record.id);
+    if (
+      oldLive &&
+      (oldLive.snapshot.runtimeState !== "idle" ||
+        oldLive.reloading ||
+        oldLive.queue.length > 0 ||
+        oldLive.pending.size > 0)
+    )
+      throw Object.assign(new Error("session_busy"), { statusCode: 409 });
+    if (oldLive && oldLive.snapshot.profileId !== current.profileId)
+      throw Object.assign(new Error("profile_conflict"), { statusCode: 409 });
+    const project = this.config.projects.find(
+      (p) => p.id === current.projectId,
+    );
+    if (!project) throw new Error("invalid_session_config");
+    this.switching.add(record.id);
+    let lease: WriterLease | undefined;
+    let acquiredColdLease = false;
+    let stagedRpc: PiRpc | undefined;
+    let stagedLive: Live | undefined;
+    let candidateState: Record<string, unknown> | undefined;
+    let candidateFailure: string | undefined;
+    let candidateQueue = 0;
+    let candidateDialogs = 0;
+    let candidateBusy = false;
+    let stagedEventHandler:
+      ((event: Record<string, unknown>) => void) | undefined;
+    let stagedFailureHandler: ((code: string) => void) | undefined;
+    let mutationStarted = false;
+    try {
+      if (oldLive) {
+        const stateResult = await oldLive.rpc.command("get_state");
+        const state = stateResult.data as Record<string, unknown>;
+        const oldProfile = this.config.profiles.find(
+          (p) => p.id === current.profileId,
+        );
+        const model = state?.model as Record<string, unknown> | undefined;
+        if (
+          !state ||
+          typeof state !== "object" ||
+          state.sessionFile !== current.nativeFile ||
+          state.sessionId !== current.nativeId ||
+          typeof state.isStreaming !== "boolean" ||
+          typeof state.isCompacting !== "boolean" ||
+          !Number.isInteger(state.pendingMessageCount) ||
+          !oldProfile ||
+          (oldProfile.provider !== undefined &&
+            model?.provider !== oldProfile.provider) ||
+          (oldProfile.model !== undefined && model?.id !== oldProfile.model) ||
+          (oldProfile.thinking !== undefined &&
+            state.thinkingLevel !== oldProfile.thinking)
+        )
+          throw new Error("sync_unconfirmed");
+        if (
+          state.isStreaming !== false ||
+          state.isCompacting !== false ||
+          state.pendingMessageCount !== 0 ||
+          oldLive.snapshot.runtimeState !== "idle" ||
+          oldLive.reloading ||
+          oldLive.queue.length ||
+          oldLive.pending.size
+        )
+          throw Object.assign(new Error("session_busy"), { statusCode: 409 });
+      }
+      if (oldLive) lease = oldLive.lease;
+      else {
+        lease = await WriterLease.acquire(current.nativeFile + ".prw.lock");
+        acquiredColdLease = true;
+      }
+      const native = await inspectNative(current.nativeFile, project);
+      if (native.id !== current.nativeId || native.file !== current.nativeFile)
+        throw new Error(oldLive ? "sync_unconfirmed" : "native_id_mismatch");
+      if (oldLive) {
+        const latest = this.ledger.session(record.id);
+        const latestState = (await oldLive.rpc.command("get_state")).data as
+          Record<string, unknown> | undefined;
+        const latestModel =
+          latestState?.model && typeof latestState.model === "object"
+            ? (latestState.model as Record<string, unknown>)
+            : undefined;
+        if (
+          !latest ||
+          latest.profileId !== current.profileId ||
+          latest.profileRevision !== current.profileRevision ||
+          latest.desiredOwner !== "web" ||
+          this.switching.has(record.id) !== true ||
+          oldLive.snapshot.runtimeState !== "idle" ||
+          oldLive.reloading ||
+          oldLive.queue.length ||
+          oldLive.pending.size
+        )
+          throw Object.assign(new Error("session_busy"), { statusCode: 409 });
+        if (
+          !latestState ||
+          latestState.sessionFile !== current.nativeFile ||
+          latestState.sessionId !== current.nativeId ||
+          typeof latestState.isStreaming !== "boolean" ||
+          typeof latestState.isCompacting !== "boolean" ||
+          !Number.isInteger(latestState.pendingMessageCount)
+        )
+          throw new Error("sync_unconfirmed");
+        if (
+          latestState.isStreaming !== false ||
+          latestState.isCompacting !== false ||
+          latestState.pendingMessageCount !== 0
+        )
+          throw Object.assign(new Error("session_busy"), { statusCode: 409 });
+        const existingProfile = this.config.profiles.find(
+          (profile) => profile.id === current.profileId,
+        );
+        if (
+          !existingProfile ||
+          (existingProfile.provider !== undefined &&
+            latestModel?.provider !== existingProfile.provider) ||
+          (existingProfile.model !== undefined &&
+            latestModel?.id !== existingProfile.model) ||
+          (existingProfile.thinking !== undefined &&
+            latestState.thinkingLevel !== existingProfile.thinking)
+        )
+          throw new Error("sync_unconfirmed");
+      }
+      const status =
+        target.id === current.profileId
+          ? "profile_unchanged"
+          : oldLive
+            ? "profile_applied"
+            : "profile_saved";
+      if (oldLive && target.id !== current.profileId) {
+        oldLive.snapshot.runtimeState = "reconfiguring";
+        oldLive.epoch++;
+        if (oldLive.eventHandler)
+          oldLive.rpc.off("event", oldLive.eventHandler);
+        if (oldLive.failureHandler)
+          oldLive.rpc.off("failure", oldLive.failureHandler);
+        this.emitSnapshot(record.id);
+        mutationStarted = true;
+        await oldLive.rpc.close();
+        this.live.delete(record.id);
+        stagedRpc = new PiRpc(
+          this.config.piCli,
+          current.nativeFile,
+          project,
+          target,
+          lease!,
+        );
+        stagedLive = {
+          rpc: stagedRpc,
+          lease: lease!,
+          snapshot: {
+            ...oldLive.snapshot,
+            profileId: target.id,
+            profileRevision: current.profileRevision + 1,
+            runtimeState: "reconfiguring",
+            queue: [],
+          },
+          queue: [],
+          pending: new Map(),
+          dialogTimers: new Map(),
+          lastStopReason: undefined,
+          epoch: oldLive.epoch + 1,
+          reloading: false,
+          staged: true,
+        };
+        stagedEventHandler = (event: Record<string, unknown>) => {
+          if (event.type === "queue_update") {
+            const steering = Array.isArray(event.steering)
+              ? event.steering
+              : [];
+            const followUp = Array.isArray(event.followUp)
+              ? event.followUp
+              : [];
+            candidateQueue = steering.length + followUp.length;
+          }
+          if (
+            [
+              "agent_start",
+              "message_start",
+              "compaction_start",
+              "auto_retry_start",
+              "summarization_retry_scheduled",
+              "summarization_retry_attempt_start",
+            ].includes(String(event.type))
+          )
+            candidateBusy = true;
+          if (event.type === "agent_settled") candidateBusy = false;
+          if (event.type === "extension_ui_request") {
+            const method = event.method;
+            if (
+              ![
+                "notify",
+                "setStatus",
+                "setWidget",
+                "setTitle",
+                "set_editor_text",
+              ].includes(String(method))
+            )
+              candidateDialogs++;
+          }
+        };
+        stagedFailureHandler = (code: string) => {
+          candidateFailure = code;
+        };
+        stagedRpc.on("event", stagedEventHandler);
+        stagedRpc.on("failure", stagedFailureHandler);
+        const proof = await stagedRpc.command("get_state");
+        const state = proof.data as Record<string, unknown>;
+        candidateState = state;
+        const model = state?.model as Record<string, unknown> | undefined;
+        if (
+          state.sessionFile !== current.nativeFile ||
+          state.sessionId !== current.nativeId ||
+          (target.provider !== undefined &&
+            model?.provider !== target.provider) ||
+          (target.model !== undefined && model?.id !== target.model) ||
+          (target.thinking !== undefined &&
+            state.thinkingLevel !== target.thinking) ||
+          state.isStreaming !== false ||
+          state.isCompacting !== false ||
+          state.pendingMessageCount !== 0 ||
+          candidateQueue !== 0 ||
+          candidateDialogs !== 0 ||
+          candidateBusy ||
+          candidateFailure !== undefined
+        )
+          throw new Error("rpc_profile_mismatch");
+        await stagedRpc.command("set_steering_mode", { mode: "one-at-a-time" });
+        await stagedRpc.command("set_follow_up_mode", {
+          mode: "one-at-a-time",
+        });
+        if (
+          candidateFailure !== undefined ||
+          candidateQueue ||
+          candidateDialogs ||
+          candidateBusy
+        )
+          throw new Error("sync_unconfirmed");
+        const nativeTail = await readNativeTail(current.nativeFile, project, {
+          expectedNativeId: current.nativeId,
+        });
+        const entries = await stagedRpc.command(
+          "get_entries",
+          nativeTail.id === null ? {} : { since: nativeTail.id },
+        );
+        const entryData = entries.data as Record<string, unknown>;
+        if (
+          !Array.isArray(entryData?.entries) ||
+          entryData.entries.length !== 0 ||
+          (entryData.leafId ?? null) !== nativeTail.id ||
+          candidateQueue !== 0 ||
+          candidateDialogs !== 0 ||
+          candidateBusy ||
+          candidateFailure !== undefined
+        )
+          throw new Error("sync_unconfirmed");
+        const finalStateResult = await stagedRpc.command("get_state");
+        const finalState = finalStateResult.data as Record<string, unknown>;
+        const finalTail = await readNativeTail(current.nativeFile, project, {
+          expectedNativeId: current.nativeId,
+        });
+        if (
+          finalTail.fingerprint !== nativeTail.fingerprint ||
+          finalState.sessionFile !== current.nativeFile ||
+          finalState.sessionId !== current.nativeId ||
+          (target.provider !== undefined &&
+            (finalState.model as Record<string, unknown> | undefined)
+              ?.provider !== target.provider) ||
+          (target.model !== undefined &&
+            (finalState.model as Record<string, unknown> | undefined)?.id !==
+              target.model) ||
+          (target.thinking !== undefined &&
+            finalState.thinkingLevel !== target.thinking) ||
+          finalState.isStreaming !== false ||
+          finalState.isCompacting !== false ||
+          finalState.pendingMessageCount !== 0 ||
+          candidateQueue ||
+          candidateDialogs ||
+          candidateBusy ||
+          candidateFailure !== undefined
+        )
+          throw new Error("sync_unconfirmed");
+        candidateState = finalState;
+        if (
+          this.ledger.session(record.id)?.profileRevision !==
+            current.profileRevision ||
+          this.ledger.unresolvedProfileSwitch(record.id, operationId)
+        )
+          throw Object.assign(new Error("profile_conflict"), {
+            statusCode: 409,
+          });
+      }
+      const result = {
+        status,
+        profileId: target.id,
+        profileRevision:
+          current.profileRevision + (target.id === current.profileId ? 0 : 1),
+        verified: !!oldLive,
+      };
+      const revision = this.ledger.commitProfileChange(
+        current.id,
+        operationId,
+        current.profileId,
+        current.profileRevision,
+        target.id,
+        current.desiredOwner,
+        result,
+      );
+      record.profileId = target.id;
+      record.profileRevision = revision;
+      if (
+        oldLive &&
+        stagedRpc &&
+        stagedLive &&
+        target.id !== current.profileId
+      ) {
+        stagedLive.snapshot.runtimeState = "idle";
+        stagedLive.snapshot.profileRevision = revision;
+        delete stagedLive.snapshot.actualProvider;
+        delete stagedLive.snapshot.actualModel;
+        delete stagedLive.snapshot.actualThinking;
+        const actualModel = candidateState?.model as
+          Record<string, unknown> | undefined;
+        if (typeof actualModel?.provider === "string")
+          stagedLive.snapshot.actualProvider = actualModel.provider;
+        if (typeof actualModel?.id === "string")
+          stagedLive.snapshot.actualModel = actualModel.id;
+        if (typeof candidateState?.thinkingLevel === "string")
+          stagedLive.snapshot.actualThinking = candidateState.thinkingLevel;
+        if (stagedEventHandler) stagedRpc.off("event", stagedEventHandler);
+        if (stagedFailureHandler)
+          stagedRpc.off("failure", stagedFailureHandler);
+        stagedLive.staged = false;
+        this.live.set(record.id, stagedLive);
+        this.bindEvents(record.id, stagedLive);
+        const failureHandler = (code: string) => {
+          if (this.live.get(record.id) === stagedLive)
+            void this.block(record.id, code);
+        };
+        stagedLive.failureHandler = failureHandler;
+        stagedRpc.on("failure", failureHandler);
+        lease = undefined;
+        this.emitSnapshot(record.id);
+      }
+      this.emit(`session:${record.id}`, { type: "resync-required" });
+      return result;
+    } catch (error) {
+      if (
+        !mutationStarted &&
+        oldLive &&
+        (error as { message?: string })?.message === "sync_unconfirmed"
+      ) {
+        oldLive.snapshot.runtimeState = "blocked";
+        oldLive.snapshot.lastError = "sync_unconfirmed";
+        this.emitSnapshot(record.id);
+      }
+      if (stagedRpc && stagedEventHandler)
+        stagedRpc.off("event", stagedEventHandler);
+      if (stagedRpc && stagedFailureHandler)
+        stagedRpc.off("failure", stagedFailureHandler);
+      if (mutationStarted) {
+        let candidateClosed = true;
+        if (stagedRpc) {
+          try {
+            await stagedRpc.close();
+          } catch {
+            candidateClosed = false;
+          }
+        }
+        if (!candidateClosed && stagedLive) {
+          stagedLive.snapshot.profileId = current.profileId;
+          stagedLive.snapshot.profileRevision = current.profileRevision;
+          delete stagedLive.snapshot.actualProvider;
+          delete stagedLive.snapshot.actualModel;
+          delete stagedLive.snapshot.actualThinking;
+          stagedLive.snapshot.runtimeState = "blocked";
+          stagedLive.snapshot.lastError = "profile_switch_unconfirmed";
+          stagedLive.staged = false;
+          this.live.set(record.id, stagedLive);
+          delete stagedLive.failureHandler;
+          delete stagedLive.eventHandler;
+        } else {
+          if (this.live.get(record.id) === stagedLive)
+            this.live.delete(record.id);
+          if (oldLive) {
+            oldLive.snapshot.runtimeState = "blocked";
+            oldLive.snapshot.lastError = "profile_switch_unconfirmed";
+            this.live.set(record.id, oldLive);
+          }
+        }
+        (error as { uncertain?: boolean }).uncertain = true;
+      }
+      if ((error as { message?: string }).message === "storage_error")
+        throw Object.assign(
+          error instanceof Error ? error : new Error("storage_error"),
+          { uncertain: true },
+        );
+      throw error;
+    } finally {
+      if (acquiredColdLease) await lease?.close();
+      this.switching.delete(record.id);
+      this.emit(`session:${record.id}`, { type: "resync-required" });
+    }
+  }
   private confirmCompactIdle(
     record: SessionRecord,
     live: Live,
@@ -884,6 +1363,20 @@ export class WorkspaceRuntime extends EventEmitter {
       this.config.projects.find((p) => p.id === record.projectId),
       record.nativeId,
     );
+    if (this.ledger.unresolvedProfileSwitch(record.id))
+      return {
+        id: record.id,
+        nativeId: record.nativeId,
+        projectId: record.projectId,
+        profileId: record.profileId,
+        profileRevision: record.profileRevision,
+        desiredOwner: record.desiredOwner,
+        runtimeState: "blocked",
+        lastError: "profile_switch_unconfirmed",
+        queue: [],
+        cleared: this.ledger.latestCleared(record.id),
+        ...metadata,
+      };
     return l
       ? {
           ...l.snapshot,
@@ -897,8 +1390,11 @@ export class WorkspaceRuntime extends EventEmitter {
           nativeId: record.nativeId,
           projectId: record.projectId,
           profileId: record.profileId,
+          profileRevision: record.profileRevision,
           desiredOwner: record.desiredOwner,
-          runtimeState: "released",
+          runtimeState: this.ledger.unresolvedProfileSwitch(record.id)
+            ? "blocked"
+            : "released",
           queue: [],
           cleared: this.ledger.latestCleared(record.id),
           ...metadata,
@@ -923,10 +1419,7 @@ export class WorkspaceRuntime extends EventEmitter {
         await l.rpc.close();
         await l.lease.close();
         l.snapshot.runtimeState = "released";
-        this.emit(`session:${id}`, {
-          type: "snapshot",
-          data: { ...l.snapshot },
-        });
+        this.emitSnapshot(id);
         this.live.delete(id);
       } catch (e) {
         await this.block(id, "cleanup_incomplete");

@@ -28,6 +28,7 @@ for (const name of ["repoA", "repoB", "repoC"])
 await mkdir(join(root, "home"), { recursive: true });
 await mkdir(gateDir, { recursive: true });
 process.env.FAKE_PI_GATE_DIR = gateDir;
+process.env.FAKE_PI_ARGV_JOURNAL = join(root, "fake-pi-argv.jsonl");
 const descriptor = resolve(
   process.env.PRW_TEST_DESCRIPTOR ??
     ".test-artifacts/browser-state/descriptor.json",
@@ -41,6 +42,7 @@ await writeFile(
     sessionDir: join(root, "project/.pi/sessions"),
     repoRoot: discoveryRoot,
     privateSessionRoot,
+    argvJournal: process.env.FAKE_PI_ARGV_JOURNAL,
   }),
   { mode: 0o600 },
 );
@@ -65,6 +67,13 @@ const config = {
       provider: "fake",
       model: "fake-model",
       thinking: "low",
+    },
+    {
+      id: "fake-alt",
+      name: "Fake alternate",
+      provider: "fake-alt-provider",
+      model: "fake-alt-model",
+      thinking: "medium",
     },
   ],
 };

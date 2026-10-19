@@ -2,6 +2,7 @@ export type Owner = "web" | "tui";
 export type RuntimeState =
   | "released"
   | "starting"
+  | "reconfiguring"
   | "idle"
   | "running"
   | "stopping"
@@ -15,7 +16,8 @@ export type OperationKind =
   | "compact"
   | "release"
   | "claim"
-  | "ui_response";
+  | "ui_response"
+  | "change_profile";
 export interface Project {
   id: string;
   name: string;
@@ -55,6 +57,9 @@ export interface OperationInput {
   dialogId?: string;
   method?: string;
   value?: unknown;
+  profileId?: string;
+  expectedProfileId?: string;
+  expectedProfileRevision?: number;
 }
 export interface Receipt {
   operationId: string;
@@ -88,6 +93,7 @@ export interface Snapshot {
   nameInfo?: SessionNameInfo;
   projectId: string;
   profileId: string;
+  profileRevision: number;
   desiredOwner: Owner;
   runtimeState: RuntimeState;
   actualProvider?: string;

@@ -138,6 +138,67 @@
   color: var(--ink);
   margin-left: 4px;
 }
+.sessionProfile {
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--line);
+  color: #514b40;
+  font-size: 12px;
+}
+.sessionProfileDetails {
+  min-width: 0;
+}
+.sessionProfileHeading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.sessionProfileTitle {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+}
+.sessionProfileSaved {
+  overflow-wrap: anywhere;
+}
+.sessionProfileControls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 10px;
+  padding-top: 8px;
+}
+.sessionProfile label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sessionProfile select,
+.sessionProfile button {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #827a6e;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+.sessionProfile select {
+  width: 100%;
+  min-width: 0;
+}
+.sessionProfile button {
+  align-self: end;
+}
+.sessionProfile [role="note"] {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.sessionProfile button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
 .sessionInfo {
   padding: 10px 22px;
   border-bottom: 1px solid var(--line);
@@ -401,6 +462,9 @@
   .status {
     padding: 9px 12px;
     gap: 8px 12px;
+  }
+  .sessionProfile {
+    padding: 9px 12px;
   }
   .chat {
     padding: 14px 12px;

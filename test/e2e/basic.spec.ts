@@ -63,7 +63,11 @@ test("login and create managed native session", async ({ page }) => {
       .getByRole("button", { name: "關閉" })
       .click();
   await expect(page.getByLabel("Pi session ID")).toBeVisible();
-  await expect(page.getByText(/Pi 尚未啟動/)).toBeVisible();
+  const runtimeStatus = page
+    .getByRole("status")
+    .filter({ hasText: "Pi 尚未啟動" });
+  await expect(runtimeStatus).toBeVisible();
+  await expect(runtimeStatus).toContainText("Pi 尚未啟動");
   const missing = await page.request.get("/api/v1/does-not-exist");
   expect(missing.status()).toBe(404);
   expect(missing.headers()["content-type"]).toMatch(/application\/json/);

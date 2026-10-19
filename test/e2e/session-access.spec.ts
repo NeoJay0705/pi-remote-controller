@@ -66,7 +66,11 @@ test("recovers from initial history load failure without losing the draft", asyn
   await expect(page.getByLabel("Pi session ID")).toContainText(
     created.nativeId,
   );
-  await expect(page.getByText("Pi 尚未啟動")).toBeVisible();
+  const runtimeStatus = page
+    .getByRole("status")
+    .filter({ hasText: "Pi 尚未啟動" });
+  await expect(runtimeStatus).toBeVisible();
+  await expect(runtimeStatus).toContainText("Pi 尚未啟動");
   await page.getByLabel("訊息草稿").fill("keep after failed load");
   let failHistory = true;
   await page.route(
@@ -101,7 +105,8 @@ test("recovers from initial history load failure without losing the draft", asyn
   await expect(page.getByLabel("Pi session ID")).toContainText(
     created.nativeId,
   );
-  await expect(page.getByText("Pi 尚未啟動")).toBeVisible();
+  await expect(runtimeStatus).toBeVisible();
+  await expect(runtimeStatus).toContainText("Pi 尚未啟動");
   await expect(page.getByLabel("訊息草稿")).toHaveValue(
     "keep after failed load",
   );
@@ -259,11 +264,15 @@ test("imports and appends to native sessions without losing external history", a
     snapshot.nativeCommand,
   );
   await page.getByRole("button", { name: "關閉" }).last().click();
-  await expect(page.getByRole("note")).toContainText(
+  const sessionAccessWarning = page
+    .getByRole("note")
+    .filter({ hasText: "請勿讓 Web 與原生 Pi 同時寫入" });
+  await expect(sessionAccessWarning).toContainText(
     "請勿讓 Web 與原生 Pi 同時寫入",
   );
+  await expect(sessionAccessWarning).toBeVisible();
   await page.getByText("Session 資訊").click();
-  await expect(page.getByRole("note")).toBeHidden();
+  await expect(sessionAccessWarning).toBeHidden();
   await expect(page.getByRole("button", { name: "交接 TUI" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Claim 回 Web" })).toHaveCount(
     0,

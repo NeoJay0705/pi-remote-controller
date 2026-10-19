@@ -64,6 +64,14 @@ Project 選擇不固定綁定單一 Project。部署設定可用 `projectDiscove
 
 Controller 不掃描個人 HOME，也不搬移既有 history。`GET /api/v1/projects` 不建立 session 目錄；只有 UI 新建 session 的 POST 才建立該目錄，權限為 `0700`。若要以 Pi settings 或 CLI override 指定其他 `sessionDir`，必須為該 Project 個別提供靜態配置；discovery 不會自動讀取個人設定。加入既有 session 只登記原檔，不搬移或轉換。受管理 TUI 期間由 lock 保護；不要另開未受管理 Pi 直接雙寫。
 
+## 受管 Session Profile
+
+側欄的 `Profile` 選單只供新建或加入 Session 時選擇，不會變更已選取的 Session。要變更既有 Session，請先展開 `Session Profile` 區塊，再選擇一份已配置 Profile，並明確按「套用 Profile」。此區塊平時收合，可保留對話空間。套用操作會使用整份 Profile；未指定欄位仍使用既有 Pi defaults／原生 session 語意，不代表清除所有隱含設定。
+
+未啟動的 Session 只會保存 Profile，Pi 尚未啟動驗證。已啟動的 Session 只可在確認安全閒置時套用，並會重建該 Session 的 Pi 程序；草稿會保留。Provider、model 與 thinking 顯示現有 runtime 狀態，不代表 extensions runtime 已完整驗證。忙碌或狀態未知時不能套用。
+
+若切換結果無法確認，Session 會維持 UNKNOWN／blocked，不會自動回退，也不應盲目重試。請由管理者依離線恢復規則確認 writer 已退出、原生檔案身分及操作結果，再決定後續處理；不要刪除 lock 或執行未核對的 SQL 解鎖命令。本功能尚不代表已部署，也未證明真 Pi 或 extensions 相容性。詳見[需求](docs/session-profile-switch-v1-requirements.md)與[設計](docs/session-profile-switch-v1-design.md)。
+
 ## Session 與操作限制
 
 舊版 Web／TUI 交接流程只保留為 legacy 相容流程，不是新版 UI 的標準操作。新版 UI 不提供 owner 交接按鈕。受管理 TUI 完全退出後，Web 可使用 Claim 載入最新 history；Idle RPC runtime 仍持有 session lease。永久 `.prw.lock` 檔不可刪除。Controller crash 時 Pi 可繼續持鎖；只有確認舊 writer 已消失後才可重試。未知操作絕不自動重播，只查 operation receipt。Controller crash 後原生 Pi queue 不能保證恢復。

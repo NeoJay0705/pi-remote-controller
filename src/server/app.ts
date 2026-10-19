@@ -455,6 +455,7 @@ export function createApp(
         "release",
         "claim",
         "ui_response",
+        "change_profile",
       ];
       if (
         !object(body, [
@@ -464,6 +465,9 @@ export function createApp(
           "dialogId",
           "method",
           "value",
+          "profileId",
+          "expectedProfileId",
+          "expectedProfileRevision",
         ]) ||
         typeof body.operationId !== "string" ||
         !UUID.test(body.operationId) ||
@@ -476,6 +480,21 @@ export function createApp(
         (body.method !== undefined && typeof body.method !== "string") ||
         (["prompt", "steer", "follow_up"].includes(String(body.kind)) &&
           (typeof body.text !== "string" || !body.text.trim())) ||
+        (body.kind === "change_profile" &&
+          (typeof body.profileId !== "string" ||
+            !body.profileId ||
+            typeof body.expectedProfileId !== "string" ||
+            !body.expectedProfileId ||
+            !Number.isSafeInteger(body.expectedProfileRevision) ||
+            (body.expectedProfileRevision as number) < 0 ||
+            body.text !== undefined ||
+            body.dialogId !== undefined ||
+            body.method !== undefined ||
+            body.value !== undefined)) ||
+        (body.kind !== "change_profile" &&
+          (body.profileId !== undefined ||
+            body.expectedProfileId !== undefined ||
+            body.expectedProfileRevision !== undefined)) ||
         (body.kind === "ui_response" &&
           (typeof body.dialogId !== "string" ||
             !body.dialogId ||
@@ -499,6 +518,18 @@ export function createApp(
         }
         const input = body as unknown as OperationInput;
         const admissionOwner = record.desiredOwner;
+        const admissionBusy =
+          tails.has(record.id) ||
+          (input.kind === "change_profile" &&
+            (() => {
+              const snapshot = runtime.snapshot(record);
+              return (
+                (snapshot.runtimeState !== "released" &&
+                  snapshot.runtimeState !== "idle") ||
+                snapshot.queue.length > 0 ||
+                (snapshot.pendingDialogs?.length ?? 0) > 0
+              );
+            })());
         if (blockedSessions.has(record.id)) throw new Error("session_blocked");
         const previous = tails.get(record.id) ?? Promise.resolve();
         const work = previous.then(async () => {
@@ -518,6 +549,10 @@ export function createApp(
           }
           let dispatched = false;
           try {
+            if (input.kind === "change_profile" && admissionBusy)
+              throw Object.assign(new Error("session_busy"), {
+                statusCode: 409,
+              });
             const freshRecord = ledger.session(record.id);
             if (!freshRecord) throw new Error("not_found");
             if (
@@ -536,35 +571,47 @@ export function createApp(
               !!result &&
               typeof result === "object" &&
               (result as { status?: unknown }).status === "handled";
-            ledger.finish(
-              input.operationId,
-              handled ? "HANDLED" : "ACCEPTED",
-              result,
-            );
+            if (input.kind !== "change_profile")
+              ledger.finish(
+                input.operationId,
+                handled ? "HANDLED" : "ACCEPTED",
+                result,
+              );
             const receipt = ledger.operation(input.operationId);
             reply.code(202).send(receipt);
           } catch (e) {
             const code = safeErrorCode(e);
+            const uncertain =
+              !!e &&
+              typeof e === "object" &&
+              "uncertain" in e &&
+              (e as { uncertain?: unknown }).uncertain === true;
             const rejected =
-              !dispatched ||
-              (e &&
-                typeof e === "object" &&
-                "uncertain" in e &&
-                (e as { uncertain?: unknown }).uncertain === false) ||
-              (e && typeof e === "object" && "statusCode" in e) ||
-              code === "rpc_command_rejected" ||
-              (code !== "internal_error" &&
-                !["storage_error", "cleanup_incomplete"].includes(code) &&
-                !code.startsWith("rpc_"));
+              !uncertain &&
+              (!dispatched ||
+                (e &&
+                  typeof e === "object" &&
+                  "uncertain" in e &&
+                  (e as { uncertain?: unknown }).uncertain === false) ||
+                (e && typeof e === "object" && "statusCode" in e) ||
+                code === "rpc_command_rejected" ||
+                (code !== "internal_error" &&
+                  !["storage_error", "cleanup_incomplete"].includes(code) &&
+                  !code.startsWith("rpc_")));
             if (code === "storage_error") {
               blockedSessions.add(record.id);
               await runtime.block(record.id, "storage_error");
             }
             try {
-              ledger.finish(
-                input.operationId,
-                rejected ? "REJECTED" : "UNKNOWN",
-              );
+              const existingReceipt = ledger.operation(input.operationId);
+              if (!(
+                input.kind === "change_profile" &&
+                existingReceipt?.status === "ACCEPTED"
+              ))
+                ledger.finish(
+                  input.operationId,
+                  rejected ? "REJECTED" : "UNKNOWN",
+                );
             } catch {
               blockedSessions.add(record.id);
               await runtime.block(record.id, "storage_error");

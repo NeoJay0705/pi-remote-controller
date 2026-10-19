@@ -28,6 +28,7 @@ import {
 } from "./conversation.js";
 import { reconstructStreamEvent, resetStream } from "./streaming.js";
 import { DialogPanel } from "./DialogPanel.js";
+import { SessionProfile } from "./SessionProfile.js";
 import { copyText, createOperationId } from "./browser-support.js";
 import { canSubmitMessage, type MessageKind } from "./session-ui.js";
 import { sessionNameLabel } from "./session-names.js";
@@ -126,6 +127,20 @@ function App() {
         }
       | undefined
     >(undefined);
+  const mergeSessionSnapshot = (nextSnapshot: Snapshot) => {
+    setSessions((old) =>
+      old.map((session) =>
+        session.id !== nextSnapshot.id ||
+        session.profileRevision > nextSnapshot.profileRevision
+          ? session
+          : {
+              ...session,
+              profileId: nextSnapshot.profileId,
+              profileRevision: nextSnapshot.profileRevision,
+            },
+      ),
+    );
+  };
   const reportSessionError = (id: string, message: string) => {
     if (!id) return;
     setSessionErrors((old) => ({
@@ -175,7 +190,15 @@ function App() {
       return;
     setProjects(p);
     setProfiles(f);
-    setSessions(s);
+    setSessions((old) =>
+      s.map((incoming) => {
+        const current = old.find((item) => item.id === incoming.id);
+        const incomingRevision = incoming.profileRevision ?? 0;
+        if (current && current.profileRevision > incomingRevision)
+          return current;
+        return { ...incoming, profileRevision: incomingRevision };
+      }),
+    );
     setNameInfos((old) => {
       const next = { ...old };
       for (const session of s)
@@ -283,6 +306,7 @@ function App() {
       ]);
       if (g !== generation.current) return;
       setSnapshot(s);
+      mergeSessionSnapshot(s);
       if (s.nameInfo) setNameInfos((old) => ({ ...old, [id]: s.nameInfo! }));
       setEntries(h.entries);
       setNextBefore(h.continuation ?? h.nextBefore);
@@ -318,6 +342,7 @@ function App() {
                 setNameInfos((old) => ({ ...old, [sessionId]: ss.nameInfo! }));
               if (revision.current === beforeRevision) {
                 setSnapshot(ss);
+                mergeSessionSnapshot(ss);
                 setLiveTools((old) => staleRunningTools(old, ss.runtimeState));
               }
               setEntries((old) =>
@@ -373,6 +398,18 @@ function App() {
               revision.current++;
               const nextSnapshot = event.data as Snapshot;
               setSnapshot(nextSnapshot);
+              setSessions((old) =>
+                old.map((session) =>
+                  session.id !== nextSnapshot.id ||
+                  session.profileRevision > nextSnapshot.profileRevision
+                    ? session
+                    : {
+                        ...session,
+                        profileId: nextSnapshot.profileId,
+                        profileRevision: nextSnapshot.profileRevision,
+                      },
+                ),
+              );
               setLiveTools((old) =>
                 staleRunningTools(old, nextSnapshot.runtimeState),
               );
@@ -548,9 +585,11 @@ function App() {
       )
         return;
       if (s.nameInfo) setNameInfos((old) => ({ ...old, [id]: s.nameInfo! }));
-      if (revision.current === beforeRevision) setSnapshot(s);
-      if (revision.current === beforeRevision)
+      if (revision.current === beforeRevision) {
+        setSnapshot(s);
+        mergeSessionSnapshot(s);
         setLiveTools((old) => staleRunningTools(old, s.runtimeState));
+      }
       setEntries((old) =>
         h.incomplete && h.entries.length === 0
           ? old
@@ -719,6 +758,95 @@ function App() {
       setBusy(false);
     }
   }
+  async function changeProfile(targetProfileId: string) {
+    const sessionId = selected;
+    const requestGeneration = generation.current;
+    const currentSnapshot = snapshot;
+    if (
+      !sessionId ||
+      !currentSnapshot ||
+      currentSnapshot.id !== sessionId ||
+      !connected ||
+      !navigator.onLine ||
+      busy ||
+      !["idle", "released"].includes(currentSnapshot.runtimeState) ||
+      currentSnapshot.queue.length > 0 ||
+      (currentSnapshot.pendingDialogs?.length ?? 0) > 0 ||
+      currentSnapshot.desiredOwner !== "web" ||
+      targetProfileId === currentSnapshot.profileId
+    )
+      return;
+    const frozen = {
+      sessionId,
+      targetProfileId,
+      expectedProfileId: currentSnapshot.profileId,
+      expectedProfileRevision: currentSnapshot.profileRevision,
+      generation: requestGeneration,
+    };
+    setBusy(true);
+    let operationId: string | undefined;
+    try {
+      operationId = createOperationId();
+      setReceipts((old) =>
+        [
+          {
+            operationId: operationId!,
+            sessionId: frozen.sessionId,
+            kind: "change_profile" as const,
+            status: "DISPATCHED",
+          },
+          ...old,
+        ].slice(0, 30),
+      );
+      const receipt = await api.operation(frozen.sessionId, {
+        operationId,
+        kind: "change_profile",
+        profileId: frozen.targetProfileId,
+        expectedProfileId: frozen.expectedProfileId,
+        expectedProfileRevision: frozen.expectedProfileRevision,
+      });
+      setReceipts((old) =>
+        old.map((item) =>
+          item.operationId === operationId
+            ? { ...item, status: receipt.status }
+            : item,
+        ),
+      );
+      if (frozen.generation === generation.current) {
+        await sync(frozen.sessionId, frozen.generation);
+        await refreshLists();
+      }
+    } catch (error) {
+      const failure = error as Error & { status?: number; code?: string };
+      let status = failure.status === 401 ? "登入逾期" : "UNKNOWN";
+      if (operationId && failure.status !== 401) {
+        try {
+          const known = await api.receipt(operationId);
+          status = known.status;
+        } catch (receiptError) {
+          if ((receiptError as { status?: number }).status === 404)
+            status = "REJECTED";
+        }
+      }
+      if (operationId)
+        setReceipts((old) =>
+          old.map((item) =>
+            item.operationId === operationId ? { ...item, status } : item,
+          ),
+        );
+      if (frozen.generation === generation.current) {
+        reportSessionError(frozen.sessionId, failure.message);
+        await sync(frozen.sessionId, frozen.generation);
+        if (failure.status !== 401) await refreshLists().catch(() => undefined);
+      }
+      if (status === "登入逾期") {
+        setAuthenticated(false);
+        setGlobalError("登入已逾期，請重新登入。");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
   async function submit(
     kind: OperationKind,
     text?: string,
@@ -755,7 +883,9 @@ function App() {
       const receipt = await api.operation(sessionId, {
         operationId,
         kind,
-        ...(frozen ? { text: frozen } : {}),
+        ...(["prompt", "steer", "follow_up"].includes(kind) && frozen
+          ? { text: frozen }
+          : {}),
         ...(ui ?? {}),
       });
       setReceipts((old) =>
@@ -769,7 +899,8 @@ function App() {
         kind !== "compact" &&
         kind !== "release" &&
         kind !== "claim" &&
-        kind !== "ui_response"
+        kind !== "ui_response" &&
+        ["prompt", "steer", "follow_up"].includes(kind)
       ) {
         setDrafts((old) => {
           if (old[sessionId] !== frozen) return old;
@@ -940,6 +1071,7 @@ function App() {
         </label>
         <label>
           <span id="profile-label">Profile</span>
+          <small>供新建／加入使用；不會變更目前已選取的 Session。</small>
           <select
             aria-labelledby="profile-label"
             value={profile}
@@ -1151,6 +1283,17 @@ function App() {
               Thinking <b>{snapshot.actualThinking || "—"}</b>
             </span>
           </section>
+        )}
+        {snapshot && snapshot.id === selected && (
+          <SessionProfile
+            key={`${snapshot.id}:${snapshot.profileRevision}`}
+            profiles={profiles}
+            snapshot={snapshot}
+            connected={connected}
+            online={navigator.onLine}
+            busy={busy}
+            onApply={(target) => void changeProfile(target)}
+          />
         )}
         {snapshot && (
           <details key={selected} className={styles.sessionInfo}>

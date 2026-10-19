@@ -11,6 +11,7 @@ export type Session = {
   nativeId: string;
   projectId: string;
   profileId: string;
+  profileRevision: number;
   nameInfo?: SessionNameInfo;
 };
 export type HistoryEntry = {
@@ -75,14 +76,26 @@ async function request<T>(
     } catch {
       /* Ignore non-JSON error responses. */
     }
+    const profileErrors: Record<string, string> = {
+      profile_conflict: "已保存的 Profile 已變更。請重新同步後再確認。",
+      session_busy: "Session 忙碌中。請等待工作完成後再套用。",
+      writer_locked: "Session writer 目前由其他程序持有，無法套用 Profile。",
+      session_profile_blocked:
+        "Profile 切換結果尚未確認。請由管理者核對操作結果；重試不會解除阻擋。",
+      profile_switch_unconfirmed:
+        "Profile 切換結果尚未確認。請由管理者核對操作結果；重試不會解除阻擋。",
+      rpc_profile_mismatch: "Pi 實際設定與目標 Profile 不符，切換未確認。",
+      sync_unconfirmed: "Pi 狀態尚未確認。請由管理者核對後再操作。",
+    };
     const message =
       response.status === 401
         ? "登入已逾期"
-        : code === "invalid-record"
-          ? "歷史讀取失敗（invalid-record）；讀取器無法處理部分紀錄。"
-          : code === "compact_rejected"
-            ? "Pi 未完成這次壓縮；已確認 session 閒置，可繼續操作。"
-            : `請求失敗 (${response.status})`;
+        : (profileErrors[code] ??
+          (code === "invalid-record"
+            ? "歷史讀取失敗（invalid-record）；讀取器無法處理部分紀錄。"
+            : code === "compact_rejected"
+              ? "Pi 未完成這次壓縮；已確認 session 閒置，可繼續操作。"
+              : `請求失敗 (${response.status})`));
     throw Object.assign(new Error(message), { status: response.status, code });
   }
   return response.json() as Promise<T>;
