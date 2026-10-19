@@ -77,9 +77,15 @@ export interface PendingDialog {
   prefill?: string;
   expiresAt: number;
 }
+export interface SessionNameInfo {
+  status: "named" | "unnamed" | "incomplete" | "error";
+  name?: string;
+  code?: string;
+}
 export interface Snapshot {
   id: string;
   nativeId: string;
+  nameInfo?: SessionNameInfo;
   projectId: string;
   profileId: string;
   desiredOwner: Owner;

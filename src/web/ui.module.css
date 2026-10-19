@@ -5,6 +5,8 @@
   color: var(--ink);
 }
 .sidebar {
+  height: 100dvh;
+  overflow-y: auto;
   width: 280px;
   flex: none;
   background: var(--panel);
@@ -14,6 +16,9 @@
   flex-direction: column;
   gap: 12px;
   min-width: 0;
+}
+.sidebar > * {
+  flex-shrink: 0;
 }
 .brand {
   font-size: 22px;
@@ -31,6 +36,7 @@
   font-size: 12px;
 }
 .sidebar select,
+.sidebar input,
 .draft select {
   background: #fff;
   color: var(--ink);
@@ -54,6 +60,10 @@
 }
 .sidebar nav {
   display: grid;
+  flex: 1;
+  min-height: 120px;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 5px;
   overflow: auto;
 }
@@ -64,6 +74,10 @@
 }
 .sidebar nav small {
   color: #514b40;
+}
+.sessionText {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .selected {
   border-color: #51401f !important;
@@ -97,9 +111,11 @@
   display: grid;
   gap: 4px;
 }
-.header small {
+.header small,
+.header div > span {
   color: #514b40;
   overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .connection {
   margin-left: auto;

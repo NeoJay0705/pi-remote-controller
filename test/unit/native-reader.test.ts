@@ -82,6 +82,7 @@ describe("bounded native JSONL reader", () => {
     expect(await listNative(project)).toContainEqual({
       file,
       id: "replacement-native",
+      nameInfo: { status: "unnamed" },
     });
     await expect(
       readNativePage(file, project, undefined, 100, {
@@ -111,6 +112,11 @@ describe("bounded native JSONL reader", () => {
   });
   it("returns visible invalid candidates and rejects symlink/hardlink files", async () => {
     const { dir, file, project } = await fixture();
+    expect(await listNative(project)).toContainEqual({
+      file,
+      id: "native",
+      nameInfo: { status: "unnamed" },
+    });
     const sl = join(dir, "symlink.jsonl"),
       hl = join(dir, "hardlink.jsonl");
     await symlink(file, sl);
@@ -119,10 +125,9 @@ describe("bounded native JSONL reader", () => {
     await expect(inspectNative(hl, project)).rejects.toThrow();
     const bad = join(dir, "bad.jsonl");
     await writeFile(bad, "not-json\n");
+    const candidates = await listNative(project);
     expect(
-      (await listNative(project)).some(
-        (candidate) => candidate.file === bad && candidate.error,
-      ),
+      candidates.some((candidate) => candidate.file === bad && candidate.error),
     ).toBe(true);
   });
   it("follows only the tail parent branch and pages each entry once", async () => {

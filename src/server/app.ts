@@ -3,14 +3,24 @@ import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "node:url";
 import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
-import type { WorkspaceConfig, OperationInput } from "../shared/contracts.js";
+import type {
+  WorkspaceConfig,
+  OperationInput,
+  SessionNameInfo,
+} from "../shared/contracts.js";
+import { normalizeSessionName } from "../shared/session-names.js";
 import { Ledger } from "./store.js";
 import { WorkspaceRuntime } from "./runtime.js";
 import { refreshDiscoveredProjects } from "./project-discovery.js";
 import { createAuth } from "./auth.js";
 import { safeErrorCode, statusForError } from "./errors.js";
 import { createNative, listNative } from "./native-sessions.js";
-import { inspectNative, readNativePage } from "./native-reader.js";
+import {
+  inspectNative,
+  readNativeName,
+  readNativePage,
+  type NameReadBudget,
+} from "./native-reader.js";
 
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -197,16 +207,31 @@ export function createApp(
   app.post("/api/v1/sessions", async (req, reply) => {
     const body = req.body;
     if (
-      !object(body, ["projectId", "profileId", "nativeFile"]) ||
+      !object(body, ["projectId", "profileId", "nativeFile", "name"]) ||
       typeof body.projectId !== "string" ||
       !body.projectId ||
       typeof body.profileId !== "string" ||
       !body.profileId ||
       (body.nativeFile !== undefined &&
-        (typeof body.nativeFile !== "string" || !body.nativeFile))
+        (typeof body.nativeFile !== "string" || !body.nativeFile)) ||
+      (body.name !== undefined && typeof body.name !== "string") ||
+      (body.nativeFile !== undefined && body.name !== undefined)
     ) {
       reply.code(400).send({
         error: { code: "invalid_schema", message: "Invalid request" },
+      });
+      return;
+    }
+    const validatedName =
+      body.name === undefined
+        ? { ok: true as const }
+        : normalizeSessionName(body.name);
+    if (!validatedName.ok) {
+      reply.code(400).send({
+        error: {
+          code: "invalid_session_name",
+          message: "Invalid session name",
+        },
       });
       return;
     }
@@ -218,21 +243,47 @@ export function createApp(
       if (!project || !profile) throw new Error("invalid_project_or_profile");
       const native = body.nativeFile
         ? await inspectNative(body.nativeFile, project)
-        : await createNative(project);
+        : await createNative(project, validatedName.name);
       const record = ledger.createSession({
         nativeFile: native.file,
         nativeId: native.id,
         projectId: project.id,
         profileId: profile.id,
       });
-      reply.code(201).send(record);
+      const nameInfo =
+        "nameInfo" in native
+          ? native.nameInfo
+          : await readNativeName(native.file, project, {
+              expectedNativeId: native.id,
+            });
+      reply.code(201).send({ ...record, nameInfo });
     } catch (e) {
       error(reply, e);
     }
   });
   app.get("/api/v1/sessions", async (_req, reply) => {
     try {
-      return ledger.sessions();
+      const budget: NameReadBudget = {
+        bytes: 0,
+        maxBytes: 8 * 1024 * 1024,
+        deadline: Date.now() + 1000,
+        now: Date.now,
+        exhausted: false,
+      };
+      const sessions = [];
+      for (const session of ledger.sessions()) {
+        const project = config.projects.find(
+          (value) => value.id === session.projectId,
+        );
+        const nameInfo: SessionNameInfo = project
+          ? await readNativeName(session.nativeFile, project, {
+              expectedNativeId: session.nativeId,
+              sharedBudget: budget,
+            })
+          : { status: "error", code: "invalid_session_config" };
+        sessions.push({ ...session, nameInfo });
+      }
+      return sessions;
     } catch (e) {
       error(reply, e);
     }
@@ -248,7 +299,15 @@ export function createApp(
           });
           return;
         }
-        return runtime.snapshot(record);
+        const project = config.projects.find(
+          (value) => value.id === record.projectId,
+        );
+        const nameInfo: SessionNameInfo = project
+          ? await readNativeName(record.nativeFile, project, {
+              expectedNativeId: record.nativeId,
+            })
+          : { status: "error", code: "invalid_session_config" };
+        return { ...runtime.snapshot(record), nameInfo };
       } catch (e) {
         error(reply, e);
       }

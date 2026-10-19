@@ -97,15 +97,21 @@ test("imports native history with pagination and browser security on desktop and
   if (mobile) await page.getByRole("button", { name: "☰" }).click();
   const sidebar = page.getByRole("complementary");
   await expect(sidebar.getByText("受管 Sessions")).toBeVisible();
-  await sidebar
-    .getByLabel("加入既有 Pi session")
-    .selectOption({ label: nativeId });
+  const candidate = sidebar.getByLabel("加入既有 Pi session");
+  const nativeOption = candidate.locator(`option[value="${nativeFile}"]`);
+  await expect(nativeOption).toHaveCount(1);
+  await expect(nativeOption).toBeEnabled();
+  await expect(nativeOption).toContainText(nativeId);
+  const candidateValuesBefore = await candidate
+    .locator("option")
+    .evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
+  await candidate.selectOption(nativeFile);
   await sidebar.getByRole("button", { name: "加入選取的 session" }).click();
   if (mobile) await sidebar.getByRole("button", { name: "關閉" }).click();
 
-  await expect(
-    page.locator("header").getByText(`原生 ${nativeId}`),
-  ).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toContainText(nativeId);
   await expect(
     page.getByText("newest-history-proof", { exact: false }),
   ).toHaveCount(1);
@@ -123,8 +129,14 @@ test("imports native history with pagination and browser security on desktop and
   expect(imported).toBeTruthy();
   expect(imported!.nativeFile).toBe(nativeFile);
   if (mobile) await page.getByRole("button", { name: "☰" }).click();
-  await expect(sidebar.getByLabel("加入既有 Pi session")).toContainText(
-    "沒有尚未加入的 session",
+  const candidateValuesAfter = await sidebar
+    .getByLabel("加入既有 Pi session")
+    .locator("option")
+    .evaluateAll((options) =>
+      options.map((option) => (option as HTMLOptionElement).value),
+    );
+  expect(candidateValuesAfter.sort()).toEqual(
+    candidateValuesBefore.filter((value) => value !== nativeFile).sort(),
   );
   await expect(sidebar.getByRole("option", { name: nativeId })).toHaveCount(0);
   if (mobile) await sidebar.getByRole("button", { name: "關閉" }).click();

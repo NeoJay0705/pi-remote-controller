@@ -7,7 +7,7 @@ import {
 import { constants as fsConstants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { isAbsolute, relative } from "node:path";
-import type { Project } from "../shared/contracts.js";
+import type { Project, SessionNameInfo } from "../shared/contracts.js";
 import { parseBoundedJson } from "./bounded-json.js";
 import type { NativeEntry } from "./native-sessions.js";
 
@@ -52,6 +52,15 @@ export interface NativeReaderOptions {
   maxMs?: number;
   previewBytes?: number;
   expectedNativeId?: string;
+  sharedBudget?: NameReadBudget;
+  now?: () => number;
+}
+export interface NameReadBudget {
+  bytes: number;
+  maxBytes: number;
+  deadline: number;
+  now: () => number;
+  exhausted: boolean;
 }
 interface Opened {
   fd: FileHandle;
@@ -118,6 +127,7 @@ async function readAt(
 async function inspectOpened(
   x: Opened,
   project: Project,
+  budget?: Budget,
 ): Promise<NativeMetadata> {
   const after = await x.fd.stat();
   if (
@@ -126,7 +136,14 @@ async function inspectOpened(
     after.size < x.st.size
   )
     throw new Error("reload-required");
-  const first = await readAt(x.fd, 0, Math.min(HEADER_MAX + 1, after.size)),
+  const first = budget
+      ? await budgetReadAt(
+          x.fd,
+          0,
+          Math.min(HEADER_MAX + 1, after.size),
+          budget,
+        )
+      : await readAt(x.fd, 0, Math.min(HEADER_MAX + 1, after.size)),
     lf = first.indexOf(10);
   if (lf < 0 || lf > HEADER_MAX) throw new Error("invalid-header");
   let header: Record<string, unknown>;
@@ -171,11 +188,161 @@ export async function inspectNative(
     await x.fd.close();
   }
 }
+
+export async function readNativeName(
+  file: string,
+  project: Project,
+  options: NativeReaderOptions = {},
+): Promise<SessionNameInfo> {
+  const now = options.now ?? options.sharedBudget?.now ?? Date.now;
+  const shared = options.sharedBudget ?? {
+    bytes: 0,
+    maxBytes: 2 * 1024 * 1024,
+    deadline: now() + 250,
+    now,
+    exhausted: false,
+  };
+  const initialBytes = shared.bytes;
+  const maxBytes = Math.min(shared.maxBytes, initialBytes + 2 * 1024 * 1024);
+  const budget: Budget = {
+    bytes: initialBytes,
+    maxBytes,
+    deadline: Math.min(shared.deadline, now() + 250),
+    exhausted: false,
+    now,
+  };
+  let x: Opened | undefined;
+  try {
+    if (
+      shared.exhausted ||
+      now() > budget.deadline ||
+      budget.bytes >= budget.maxBytes
+    ) {
+      shared.exhausted = true;
+      return { status: "incomplete" };
+    }
+    x = await opened(file, project);
+    const before = x.st;
+    const meta = await inspectOpened(x, project, budget);
+    if (
+      options.expectedNativeId !== undefined &&
+      meta.id !== options.expectedNativeId
+    )
+      throw new Error("native_id_mismatch");
+    let nameInfo: SessionNameInfo = { status: "unnamed" };
+    for await (const [start, end] of reverseLines(
+      x.fd,
+      { end: meta.size, lineEnd: meta.size, skippingPartialTail: false },
+      budget,
+      true,
+    )) {
+      if (start === 0) continue;
+      const parsed = await parseLine(
+        x.fd,
+        start,
+        end,
+        undefined,
+        budget,
+        16 * 1024,
+      );
+      if (parsed.value.type !== "session_info") continue;
+      if (parsed.truncated) throw new Error("invalid-record");
+      const rawName = parsed.value.name;
+      if (rawName !== undefined && typeof rawName !== "string")
+        throw new Error("invalid-record");
+      if (
+        typeof rawName === "string" &&
+        Buffer.byteLength(rawName, "utf8") > 4096
+      )
+        throw new Error("invalid-record");
+      const name = typeof rawName === "string" ? rawName.trim() : "";
+      nameInfo = name ? { status: "named", name } : { status: "unnamed" };
+      break;
+    }
+    if (budget.exhausted || now() > budget.deadline)
+      throw new Error("work-budget");
+    const after = await x.fd.stat();
+    const path = await lstat(meta.file);
+    const finalHeader = await budgetReadAt(
+      x.fd,
+      0,
+      Math.min(HEADER_MAX + 1, after.size),
+      budget,
+    );
+    const lf = finalHeader.indexOf(10);
+    if (
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.nlink !== before.nlink ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs ||
+      path.isSymbolicLink() ||
+      path.dev !== before.dev ||
+      path.ino !== before.ino ||
+      path.nlink !== 1 ||
+      lf < 0 ||
+      createHash("sha256")
+        .update(finalHeader.subarray(0, lf + 1))
+        .digest("hex") !== meta.headerhash
+    )
+      throw new Error("reload-required");
+    if (budget.bytes > budget.maxBytes || now() > budget.deadline)
+      throw new Error("work-budget");
+    shared.bytes = budget.bytes;
+    return nameInfo;
+  } catch (error) {
+    shared.bytes = budget.bytes;
+    shared.exhausted = shared.exhausted || budget.bytes >= shared.maxBytes;
+    const code = (error as Error).message;
+    if (code === "work-budget") {
+      shared.exhausted =
+        shared.bytes >= shared.maxBytes || now() > shared.deadline;
+      return { status: "incomplete" };
+    }
+    if (code === "reload-required") return { status: "incomplete" };
+    if (code === "native_id_mismatch")
+      return { status: "error", code: "native_id_mismatch" };
+    return {
+      status: "error",
+      code: [
+        "unsafe-path",
+        "unsupported-file",
+        "permission-denied",
+        "invalid-header",
+        "native_cwd_mismatch",
+        "invalid-record",
+      ].includes(code)
+        ? code
+        : "invalid-record",
+    };
+  } finally {
+    await x?.fd.close();
+  }
+}
 interface Budget {
   bytes: number;
   maxBytes: number;
   deadline: number;
   exhausted: boolean;
+  now?: () => number;
+}
+async function budgetReadAt(
+  fd: FileHandle,
+  start: number,
+  length: number,
+  budget: Budget,
+): Promise<Buffer> {
+  if (
+    (budget.now?.() ?? Date.now()) > budget.deadline ||
+    length > budget.maxBytes - budget.bytes
+  ) {
+    budget.exhausted = true;
+    throw new Error("work-budget");
+  }
+  const result = await readAt(fd, start, length);
+  budget.bytes += result.length;
+  return result;
 }
 interface ScanState {
   end: number;
@@ -189,13 +356,19 @@ async function* reverseLines(
   initializeTail = false,
 ): AsyncGenerator<[number, number]> {
   if (initializeTail && scan.end > 0) {
-    if (budget.bytes >= budget.maxBytes || Date.now() > budget.deadline) {
+    if (
+      budget.bytes >= budget.maxBytes ||
+      (budget.now?.() ?? Date.now()) > budget.deadline
+    ) {
       budget.exhausted = true;
       return;
     }
     const last = await readAt(fd, scan.end - 1, 1);
     budget.bytes += last.length;
-    if (budget.bytes > budget.maxBytes || Date.now() > budget.deadline) {
+    if (
+      budget.bytes > budget.maxBytes ||
+      (budget.now?.() ?? Date.now()) > budget.deadline
+    ) {
       budget.exhausted = true;
       return;
     }
@@ -203,7 +376,10 @@ async function* reverseLines(
     else scan.lineEnd = scan.end - 1;
   }
   while (scan.skippingPartialTail && scan.end > 0) {
-    if (budget.bytes >= budget.maxBytes || Date.now() > budget.deadline) {
+    if (
+      budget.bytes >= budget.maxBytes ||
+      (budget.now?.() ?? Date.now()) > budget.deadline
+    ) {
       budget.exhausted = true;
       return;
     }
@@ -219,7 +395,10 @@ async function* reverseLines(
     } else scan.end = start;
   }
   while (scan.end > 0) {
-    if (budget.bytes >= budget.maxBytes || Date.now() > budget.deadline) {
+    if (
+      budget.bytes >= budget.maxBytes ||
+      (budget.now?.() ?? Date.now()) > budget.deadline
+    ) {
       budget.exhausted = true;
       return;
     }
@@ -255,7 +434,10 @@ async function hashLine(
       end - at,
       budget ? budget.maxBytes - budget.bytes : BLOCK,
     );
-    if (length <= 0 || (budget && Date.now() > budget.deadline)) {
+    if (
+      length <= 0 ||
+      (budget && (budget.now?.() ?? Date.now()) > budget.deadline)
+    ) {
       budget!.exhausted = true;
       throw new Error("work-budget");
     }
@@ -279,7 +461,10 @@ async function* countedRange(
       end - at,
       budget ? budget.maxBytes - budget.bytes : BLOCK,
     );
-    if (length <= 0 || (budget && Date.now() > budget.deadline)) {
+    if (
+      length <= 0 ||
+      (budget && (budget.now?.() ?? Date.now()) > budget.deadline)
+    ) {
       budget!.exhausted = true;
       throw new Error("work-budget");
     }

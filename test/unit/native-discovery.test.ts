@@ -68,7 +68,9 @@ describe("native session discovery", () => {
         headers: { cookie },
       });
       expect(list.statusCode).toBe(200);
-      expect(list.json()).toEqual([{ file: unjoinedFile, id: unjoinedId }]);
+      expect(list.json()).toEqual([
+        { file: unjoinedFile, id: unjoinedId, nameInfo: { status: "unnamed" } },
+      ]);
       const duplicate = await app.inject({
         method: "POST",
         url: "/api/v1/sessions",

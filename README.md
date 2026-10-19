@@ -72,6 +72,8 @@ Controller 不掃描個人 HOME，也不搬移既有 history。`GET /api/v1/proj
 
 ## Web 功能與驗證
 
+新建 Session 可選填原生名稱。名稱會寫入 Pi 原生 session 檔案；既有名稱會在候選清單、受管清單與頁首顯示。名稱可重複，請以完整 Pi session ID 與 App ID 區分 session。新建名稱會 trim 首尾空白，限制為 128 個 Unicode code points，並拒絕控制字元、換行及 U+2028／U+2029。加入既有 session 只讀原名，不會改寫原檔。原生 Pi 外部改名後，使用「重新整理 Session 清單」或重新選取 session 更新顯示；不保證即時推播。名稱讀取使用有界掃描：每檔最多 2 MiB／250 ms，每份清單共用最多 8 MiB／1000 ms。超出預算會標示讀取未完成，不會假稱未命名。完整規格見 [Session naming v1 設計](docs/session-naming-v1-design.md)。
+
 問答工具卡將工具活動關聯至發起的問答；父 agent 等待 child 回報時顯示狀態，不宣稱逐 token 更新。介面使用角色標示與乳白主題。詳見 [Interface v2](docs/interface-v2-requirements-design.md)。
 
 曾完成的離線合成驗收與限制見上方歷史摘要及驗證文件。較早的 history-fix-140／140-16、ready-130／130-14、97-12 均為各自階段的歷史基準。真 Pi/TUI/模型完整端到端、實體手機、遠端 VPN 與 HTTPS 尚未驗證。

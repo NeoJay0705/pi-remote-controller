@@ -3,8 +3,9 @@ import { mkdir } from "node:fs/promises";
 import { open, realpath, lstat, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import type { Project } from "../shared/contracts.js";
-import { inspectNative } from "./native-reader.js";
+import type { Project, SessionNameInfo } from "../shared/contracts.js";
+import { normalizeSessionName } from "../shared/session-names.js";
+import { inspectNative, readNativeName } from "./native-reader.js";
 
 const MAX_BYTES = 32 * 1024 * 1024;
 const MAX_LIST = 10000;
@@ -21,7 +22,14 @@ export interface NativeData {
 }
 export async function createNative(
   project: Project,
-): Promise<{ file: string; id: string }> {
+  requestedName?: string,
+): Promise<{ file: string; id: string; nameInfo: SessionNameInfo }> {
+  const validated =
+    requestedName === undefined
+      ? { ok: true as const }
+      : normalizeSessionName(requestedName);
+  if (!validated.ok) throw new Error("invalid_session_name");
+  const name = validated.name;
   const id = randomUUID();
   try {
     if ((await lstat(project.sessionDir)).isSymbolicLink())
@@ -37,14 +45,25 @@ export async function createNative(
   )
     throw new Error("invalid_session_dir");
   const file = join(dir, `${Date.now()}-${id}.jsonl`);
+  const timestamp = new Date().toISOString();
   const header =
     JSON.stringify({
       type: "session",
       version: 3,
       id,
-      timestamp: new Date().toISOString(),
+      timestamp,
       cwd: project.cwd,
-    }) + "\n";
+    }) +
+    "\n" +
+    (name
+      ? JSON.stringify({
+          type: "session_info",
+          id: randomUUID(),
+          parentId: null,
+          timestamp,
+          name,
+        }) + "\n"
+      : "");
   const h = await open(
     file,
     constants.O_CREAT |
@@ -59,7 +78,11 @@ export async function createNative(
   } finally {
     await h.close();
   }
-  return { file, id };
+  return {
+    file,
+    id,
+    nameInfo: name ? { status: "named", name } : { status: "unnamed" },
+  };
 }
 export async function validateNative(
   fileInput: string,
@@ -187,8 +210,17 @@ export interface NativeCandidate {
   file: string;
   id?: string;
   error?: string;
+  nameInfo?: SessionNameInfo;
 }
-export async function listNative(project: Project): Promise<NativeCandidate[]> {
+export interface NativeListOptions {
+  maxBytes?: number;
+  maxMs?: number;
+  now?: () => number;
+}
+export async function listNative(
+  project: Project,
+  options: NativeListOptions = {},
+): Promise<NativeCandidate[]> {
   let names: string[];
   try {
     names = await readdir(project.sessionDir);
@@ -198,12 +230,28 @@ export async function listNative(project: Project): Promise<NativeCandidate[]> {
   }
   if (names.length > MAX_LIST) throw new Error("session_directory_too_large");
   const files: NativeCandidate[] = [];
+  const budget = {
+    bytes: 0,
+    maxBytes: options.maxBytes ?? 8 * 1024 * 1024,
+    deadline: (options.now?.() ?? Date.now()) + (options.maxMs ?? 1000),
+    now: options.now ?? Date.now,
+    exhausted: false,
+  };
   for (const name of names) {
     if (!name.endsWith(".jsonl")) continue;
     const file = resolve(project.sessionDir, name);
     try {
       const v = await inspectNative(file, project);
-      files.push({ file: v.file, id: v.id });
+      const nameInfo =
+        budget.exhausted ||
+        budget.bytes >= budget.maxBytes ||
+        budget.now() > budget.deadline
+          ? { status: "incomplete" as const }
+          : await readNativeName(file, project, {
+              sharedBudget: budget,
+              expectedNativeId: v.id,
+            });
+      files.push({ file: v.file, id: v.id, nameInfo });
     } catch (error) {
       const code = (error as Error)?.message;
       files.push({

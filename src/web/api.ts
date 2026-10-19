@@ -4,12 +4,14 @@ import type {
   Project,
   Receipt,
   Snapshot,
+  SessionNameInfo,
 } from "../shared/contracts.js";
 export type Session = {
   id: string;
   nativeId: string;
   projectId: string;
   profileId: string;
+  nameInfo?: SessionNameInfo;
 };
 export type HistoryEntry = {
   id: string;
@@ -27,7 +29,12 @@ export type HistoryPage = {
   truncated: boolean;
   stats?: Record<string, unknown>;
 };
-export type NativeCandidate = { id?: string; file: string; error?: string };
+export type NativeCandidate = {
+  id?: string;
+  file: string;
+  error?: string;
+  nameInfo?: SessionNameInfo;
+};
 export function mergeActiveHistory(
   old: HistoryEntry[],
   page: HistoryEntry[],
@@ -107,7 +114,12 @@ export const api = {
       `/api/v1/projects/${encodeURIComponent(project)}/native-sessions`,
       signal ? { signal } : {},
     ),
-  create: (projectId: string, profileId: string, nativeFile?: string) =>
+  create: (
+    projectId: string,
+    profileId: string,
+    nativeFile?: string,
+    name?: string,
+  ) =>
     request<Session>("/api/v1/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -115,6 +127,7 @@ export const api = {
         projectId,
         profileId,
         ...(nativeFile ? { nativeFile } : {}),
+        ...(!nativeFile && name !== undefined ? { name } : {}),
       }),
     }),
   snapshot: (id: string, signal?: AbortSignal) =>

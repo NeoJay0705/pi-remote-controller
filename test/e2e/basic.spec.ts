@@ -62,7 +62,7 @@ test("login and create managed native session", async ({ page }) => {
       .getByRole("complementary")
       .getByRole("button", { name: "關閉" })
       .click();
-  await expect(page.locator("header").getByText(/原生/)).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toBeVisible();
   await expect(page.getByText(/Pi 尚未啟動/)).toBeVisible();
   const missing = await page.request.get("/api/v1/does-not-exist");
   expect(missing.status()).toBe(404);

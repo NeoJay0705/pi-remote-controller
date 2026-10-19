@@ -39,7 +39,18 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
   if (page.viewportSize()?.width && page.viewportSize()!.width <= 700)
     await page.getByRole("button", { name: "☰" }).click();
   await expect(page.getByText("受管 Sessions")).toBeVisible();
+  const createResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname === "/api/v1/sessions",
+  );
   await page.getByRole("button", { name: /新建 Session/ }).click();
+  const createdResponse = await createResponse;
+  expect(createdResponse.status()).toBe(201);
+  const created = (await createdResponse.json()) as {
+    id: string;
+    nativeId: string;
+  };
   if (page.viewportSize()?.width && page.viewportSize()!.width <= 700)
     await page
       .getByRole("complementary")
@@ -47,11 +58,10 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
       .click();
 
   const header = page.locator("header");
-  const nativeHeader = header.getByText(/原生/);
-  await expect(nativeHeader).toBeVisible();
-  const sessionLabel = await header.locator("small").innerText();
-  const sessionId = sessionLabel.match(/App ID：([\w-]+)/)?.[1];
-  expect(sessionId).toBeTruthy();
+  const nativeHeader = page.getByLabel("Pi session ID");
+  await expect(header.locator("small")).toContainText(`App ID：${created.id}`);
+  await expect(nativeHeader).toContainText(created.nativeId);
+  const sessionId = created.id;
 
   const getSnapshot = async (): Promise<Snapshot> => {
     const snapshotResponse = await page.request.get(

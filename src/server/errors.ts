@@ -38,6 +38,7 @@ const KNOWN_ERRORS = new Set([
   "unsafe_lock_file",
   "lease_closed",
   "invalid_schema",
+  "invalid_session_name",
   "origin_forbidden",
   "json_required",
   "unauthorized",

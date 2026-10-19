@@ -63,9 +63,9 @@ test("recovers from initial history load failure without losing the draft", asyn
       .getByRole("complementary")
       .getByRole("button", { name: "關閉" })
       .click();
-  await expect(
-    page.locator("header").getByText(`原生 ${created.nativeId}`),
-  ).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toContainText(
+    created.nativeId,
+  );
   await expect(page.getByText("Pi 尚未啟動")).toBeVisible();
   await page.getByLabel("訊息草稿").fill("keep after failed load");
   let failHistory = true;
@@ -98,9 +98,9 @@ test("recovers from initial history load failure without losing the draft", asyn
   expect(operationRequests).toHaveLength(0);
   failHistory = false;
   await page.getByRole("button", { name: "重試載入" }).click();
-  await expect(
-    page.locator("header").getByText(`原生 ${created.nativeId}`),
-  ).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toContainText(
+    created.nativeId,
+  );
   await expect(page.getByText("Pi 尚未啟動")).toBeVisible();
   await expect(page.getByLabel("訊息草稿")).toHaveValue(
     "keep after failed load",
@@ -199,14 +199,15 @@ test("imports and appends to native sessions without losing external history", a
   const sidebar = page.getByRole("complementary");
   await expect(sidebar.getByText("受管 Sessions")).toBeVisible();
   const candidate = sidebar.getByLabel("加入既有 Pi session");
-  await expect(candidate.getByRole("option", { name: nativeId })).toBeEnabled();
-  await candidate.selectOption({ label: nativeId });
+  const nativeOption = candidate.locator(`option[value="${nativeFile}"]`);
+  await expect(nativeOption).toHaveCount(1);
+  await expect(nativeOption).toBeEnabled();
+  await expect(nativeOption).toContainText(nativeId);
+  await candidate.selectOption(nativeFile);
   await sidebar.getByRole("button", { name: "加入選取的 session" }).click();
   if (mobile) await sidebar.getByRole("button", { name: "關閉" }).click();
 
-  await expect(
-    page.locator("header").getByText(`原生 ${nativeId}`),
-  ).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toContainText(nativeId);
   await expect(
     page.getByText("latest-root-proof", { exact: false }),
   ).toHaveCount(1);

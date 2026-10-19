@@ -30,7 +30,14 @@ async function closeSidebar(page: Page): Promise<void> {
 async function currentSession(
   page: Page,
 ): Promise<{ id: string; nativeId: string }> {
-  const text = await page.locator("header small").innerText();
+  const headerLabel = page.locator("header small");
+  await expect
+    .poll(
+      async () =>
+        (await headerLabel.innerText()).match(/App ID：([\w-]+)/)?.[1] ?? "",
+    )
+    .toMatch(/^[\w-]+$/);
+  const text = await headerLabel.innerText();
   const id = text.match(/App ID：([\w-]+)/)?.[1];
   expect(id).toBeTruthy();
   const snapshotResponse = await page.request.get(
@@ -74,7 +81,7 @@ test("session switching survives offline completion and page reconnect", async (
   await ensureSidebar(page);
   await page.getByRole("button", { name: /新建 Session/ }).click();
   await closeSidebar(page);
-  await expect(page.locator("header").getByText(/原生/)).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toBeVisible();
   const sessionA = await currentSession(page);
 
   await ensureSidebar(page);
@@ -147,8 +154,8 @@ test("session switching survives offline completion and page reconnect", async (
     })
     .toBe(true);
   await expect(page.getByText("done", { exact: true })).toHaveCount(0);
-  await expect(page.locator("header").getByText(sessionA.nativeId)).toHaveCount(
-    0,
+  await expect(page.getByLabel("Pi session ID")).not.toContainText(
+    sessionA.nativeId,
   );
   expect(await page.getByLabel("訊息草稿").inputValue()).toBe(
     "draft-B-must-survive",
@@ -161,9 +168,9 @@ test("session switching survives offline completion and page reconnect", async (
   await ensureSidebar(page);
   await sessionButton(sessionA.id).click();
   await closeSidebar(page);
-  await expect(
-    page.locator("header").getByText(sessionA.nativeId),
-  ).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toContainText(
+    sessionA.nativeId,
+  );
   await expect(page.getByText("done", { exact: true })).toBeVisible();
   await expect
     .poll(async () => (await snapshotA()).nativeId)
@@ -172,9 +179,9 @@ test("session switching survives offline completion and page reconnect", async (
   await ensureSidebar(page);
   await sessionButton(sessionB.id).click();
   await closeSidebar(page);
-  await expect(
-    page.locator("header").getByText(sessionB.nativeId),
-  ).toBeVisible();
+  await expect(page.getByLabel("Pi session ID")).toContainText(
+    sessionB.nativeId,
+  );
   await expect(page.getByLabel("訊息草稿")).toHaveValue("draft-B-must-survive");
   await expect(page.getByText("done", { exact: true })).toHaveCount(0);
 
@@ -189,9 +196,9 @@ test("session switching survives offline completion and page reconnect", async (
       .filter({ hasText: sessionA.id.slice(0, 8) })
       .click();
     await closeSidebar(reopened);
-    await expect(
-      reopened.locator("header").getByText(sessionA.nativeId),
-    ).toBeVisible();
+    await expect(reopened.getByLabel("Pi session ID")).toContainText(
+      sessionA.nativeId,
+    );
     await expect(reopened.getByText("done", { exact: true })).toBeVisible();
   } finally {
     await reopened.close();

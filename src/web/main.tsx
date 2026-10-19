@@ -11,6 +11,7 @@ import type {
   Profile,
   Project,
   Snapshot,
+  SessionNameInfo,
 } from "../shared/contracts.js";
 import {
   api,
@@ -29,6 +30,8 @@ import { reconstructStreamEvent, resetStream } from "./streaming.js";
 import { DialogPanel } from "./DialogPanel.js";
 import { copyText, createOperationId } from "./browser-support.js";
 import { canSubmitMessage, type MessageKind } from "./session-ui.js";
+import { sessionNameLabel } from "./session-names.js";
+import { normalizeSessionName } from "../shared/session-names.js";
 import styles from "./ui.module.css";
 import "./style.css";
 
@@ -63,8 +66,15 @@ function App() {
     [sessions, setSessions] = useState<Session[]>([]),
     [project, setProject] = useState(""),
     [profile, setProfile] = useState(""),
+    [newSessionName, setNewSessionName] = useState(""),
+    [nameInfos, setNameInfos] = useState<Record<string, SessionNameInfo>>({}),
     [nativeFiles, setNativeFiles] = useState<
-      Array<{ file: string; id?: string; error?: string }>
+      Array<{
+        file: string;
+        id?: string;
+        error?: string;
+        nameInfo?: SessionNameInfo;
+      }>
     >([]),
     [nativeFile, setNativeFile] = useState(""),
     [selected, setSelected] = useState(""),
@@ -148,16 +158,30 @@ function App() {
     >(undefined),
     streamState = useRef(resetStream()),
     previousLeaf = useRef<string | undefined>(undefined),
-    refreshRevision = useRef(0);
+    refreshRevision = useRef(0),
+    listRequestSerial = useRef(0);
   const refreshLists = useCallback(async () => {
+    const requestGeneration = generation.current;
+    const requestSerial = ++listRequestSerial.current;
     const [p, f, s] = await Promise.all([
       api.projects(),
       api.profiles(),
       api.sessions(),
     ]);
+    if (
+      requestGeneration !== generation.current ||
+      requestSerial !== listRequestSerial.current
+    )
+      return;
     setProjects(p);
     setProfiles(f);
     setSessions(s);
+    setNameInfos((old) => {
+      const next = { ...old };
+      for (const session of s)
+        if (session.nameInfo) next[session.id] = session.nameInfo;
+      return next;
+    });
     setProject((v) => v || p[0]?.id || "");
     setProfile((v) => v || f[0]?.id || "");
   }, []);
@@ -166,6 +190,7 @@ function App() {
       await api.login(token);
       setGlobalError("");
       setSessionErrors({});
+      setNameInfos({});
       setToken("");
       setAuthenticated(true);
       await refreshLists();
@@ -258,6 +283,7 @@ function App() {
       ]);
       if (g !== generation.current) return;
       setSnapshot(s);
+      if (s.nameInfo) setNameInfos((old) => ({ ...old, [id]: s.nameInfo! }));
       setEntries(h.entries);
       setNextBefore(h.continuation ?? h.nextBefore);
       setHistoryIncomplete(h.incomplete);
@@ -288,6 +314,8 @@ function App() {
                 !navigator.onLine
               )
                 return;
+              if (ss.nameInfo)
+                setNameInfos((old) => ({ ...old, [sessionId]: ss.nameInfo! }));
               if (revision.current === beforeRevision) {
                 setSnapshot(ss);
                 setLiveTools((old) => staleRunningTools(old, ss.runtimeState));
@@ -332,6 +360,7 @@ function App() {
                 setAuthenticated(false);
                 setGlobalError("登入已逾期，請重新登入。");
                 setSessionErrors({});
+                setNameInfos({});
               }
             },
           );
@@ -518,6 +547,7 @@ function App() {
         refreshAtRequest !== refreshRevision.current
       )
         return;
+      if (s.nameInfo) setNameInfos((old) => ({ ...old, [id]: s.nameInfo! }));
       if (revision.current === beforeRevision) setSnapshot(s);
       if (revision.current === beforeRevision)
         setLiveTools((old) => staleRunningTools(old, s.runtimeState));
@@ -559,6 +589,7 @@ function App() {
       setManualCopy(undefined);
       setGlobalError("登入已逾期，請重新登入。");
       setSessionErrors({});
+      setNameInfos({});
     };
     window.addEventListener("prw-auth-expired", expired);
     return () => window.removeEventListener("prw-auth-expired", expired);
@@ -660,17 +691,30 @@ function App() {
   }
   async function create(importExisting = false) {
     if (busy) return;
+    if (!importExisting) {
+      const validated = normalizeSessionName(newSessionName);
+      if (!validated.ok) {
+        setGlobalError(
+          "Session 名稱無效。請使用最多 128 個 Unicode code points，且不要包含控制字元或換行。",
+        );
+        return;
+      }
+    }
     setBusy(true);
     try {
       const s = await api.create(
         project,
         profile,
         importExisting ? nativeFile : undefined,
+        importExisting ? undefined : newSessionName,
       );
+      if (!importExisting) setNewSessionName("");
       await refreshLists();
       await selectSession(s.id);
     } catch (e) {
-      setGlobalError((e as Error).message);
+      setGlobalError(
+        `建立失敗：${(e as Error).message}。請重新整理 Session 清單確認結果；不會自動重送。`,
+      );
     } finally {
       setBusy(false);
     }
@@ -760,6 +804,7 @@ function App() {
         setAuthenticated(false);
         setGlobalError("登入已逾期，請重新登入。");
         setSessionErrors({});
+        setNameInfos({});
         generation.current++;
         source.current?.close();
         window.clearTimeout(timer.current);
@@ -907,11 +952,30 @@ function App() {
             ))}
           </select>
         </label>
+        <label>
+          <span>Session 名稱（選填）</span>
+          <input
+            aria-label="Session 名稱（選填）"
+            type="text"
+            value={newSessionName}
+            onChange={(event) => setNewSessionName(event.target.value)}
+          />
+        </label>
         <button
           disabled={busy || !project || !profile}
           onClick={() => void create()}
         >
           ＋ 新建 Session
+        </button>
+        <button
+          disabled={busy}
+          onClick={() =>
+            void refreshLists().catch((e) =>
+              setGlobalError((e as Error).message),
+            )
+          }
+        >
+          重新整理 Session 清單
         </button>
         <label>
           <span id="native-session-label">加入既有 Pi session</span>
@@ -925,6 +989,7 @@ function App() {
             </option>
             {nativeFiles.map((n) => (
               <option key={n.file} value={n.file} disabled={!n.id || !!n.error}>
+                {n.nameInfo ? `${sessionNameLabel(n.nameInfo)} · ` : ""}
                 {n.id || "Session ID 不可用"}
                 {n.error ? ` — ${n.error}` : ""}
               </option>
@@ -950,9 +1015,12 @@ function App() {
                   setMobileOpen(false);
                 }}
               >
-                <span>{s.nativeId.slice(0, 8)}</span>
-                <small>
-                  {s.id.slice(0, 8)} · {s.profileId}
+                <span className={styles.sessionText}>
+                  {sessionNameLabel(nameInfos[s.id])}
+                </span>
+                <small className={styles.sessionText}>
+                  Pi session ID：{s.nativeId} · App ID：{s.id.slice(0, 8)} ·{" "}
+                  {s.profileId}
                 </small>
               </button>
             ))}
@@ -962,6 +1030,7 @@ function App() {
           onClick={() => {
             void api.logout().finally(() => {
               generation.current++;
+              listRequestSerial.current++;
               abort.current?.abort();
               nativeAbort.current?.abort();
               source.current?.close();
@@ -979,6 +1048,7 @@ function App() {
               setGlobalError("");
               setManualCopy(undefined);
               setSessions([]);
+              setNameInfos({});
             });
           }}
         >
@@ -1009,9 +1079,14 @@ function App() {
             ☰
           </button>
           <div>
-            <strong>
-              {snapshot ? `原生 ${snapshot.nativeId}` : "選擇或建立 Session"}
+            <strong className={styles.sessionText}>
+              {snapshot
+                ? sessionNameLabel(nameInfos[selected])
+                : "選擇或建立 Session"}
             </strong>
+            <span className={styles.sessionText} aria-label="Pi session ID">
+              Pi session ID：{snapshot?.nativeId || "—"}
+            </span>
             <small>App ID：{snapshot?.id || selected || "—"}</small>
           </div>
           <span

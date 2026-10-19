@@ -31,17 +31,17 @@ test("discovers isolated projects and keeps sessions grouped", async ({
     await selector.selectOption({ label: projectName });
     const createButton = page.getByRole("button", { name: /新建 Session/ });
     await expect(createButton).toBeEnabled();
-    const heading = page.locator("header strong");
+    const nativeIdLabel = page.getByLabel("Pi session ID");
     await createButton.click();
     await expect
       .poll(async () => {
-        const match = (await heading.innerText()).match(
-          /原生 ([0-9a-f-]{36})/i,
+        const match = (await nativeIdLabel.innerText()).match(
+          /([0-9a-f-]{36})/i,
         );
         return match?.[1] && !seenNativeIds.has(match[1]) ? match[1] : "";
       })
       .toMatch(/^[0-9a-f-]{36}$/i);
-    const match = (await heading.innerText()).match(/原生 ([0-9a-f-]{36})/i);
+    const match = (await nativeIdLabel.innerText()).match(/([0-9a-f-]{36})/i);
     expect(match).not.toBeNull();
     const nativeId = match![1]!;
     expect(seenNativeIds.has(nativeId)).toBe(false);
@@ -111,7 +111,7 @@ test("discovers isolated projects and keeps sessions grouped", async ({
     await expect
       .poll(async () =>
         (await nav.locator("button small").allTextContents())
-          .map((label) => label.split(" · ")[0]!.trim())
+          .map((label) => label.match(/App ID：([0-9a-f]{8})/i)?.[1] ?? "")
           .sort(),
       )
       .toEqual(expected);
@@ -129,8 +129,8 @@ test("discovers isolated projects and keeps sessions grouped", async ({
       .getByRole("button")
       .filter({ hasText: record.id.slice(0, 8) });
     await ownSession.click();
-    await expect(page.locator("header strong")).toContainText(
-      record.nativeId.slice(0, 8),
+    await expect(page.getByLabel("Pi session ID")).toContainText(
+      record.nativeId,
     );
   };
   await selectAndCheckNavigation("repoA", repoA);
