@@ -1,4 +1,9 @@
 import { test, expect } from "@playwright/test";
+import {
+  expectNoReceiptUi,
+  expectPiSessionId,
+  savedReceipts,
+} from "./ui-helpers.js";
 
 type Snapshot = {
   id: string;
@@ -18,15 +23,29 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
       configurable: true,
     });
   });
-  const operationRequests: Array<{ kind: string; text?: string }> = [];
+  const operationRequests: Array<{
+    kind: string;
+    text?: string;
+    operationId: string;
+    sessionId: string;
+  }> = [];
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
       /\/api\/v1\/sessions\/[^/]+\/operations$/.test(request.url())
     ) {
-      operationRequests.push(
-        request.postDataJSON() as { kind: string; text?: string },
-      );
+      const sessionId =
+        new URL(request.url()).pathname.match(
+          /\/sessions\/([^/]+)\/operations$/,
+        )?.[1] ?? "";
+      operationRequests.push({
+        ...(request.postDataJSON() as {
+          kind: string;
+          text?: string;
+          operationId: string;
+        }),
+        sessionId,
+      });
     }
   });
 
@@ -58,9 +77,8 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
       .click();
 
   const header = page.locator("header");
-  const nativeHeader = page.getByLabel("Pi session ID");
-  await expect(header.locator("small")).toContainText(`App ID：${created.id}`);
-  await expect(nativeHeader).toContainText(created.nativeId);
+  await expect(header).toHaveAttribute("data-session-id", created.id);
+  await expectPiSessionId(page, created.nativeId);
   const sessionId = created.id;
 
   const getSnapshot = async (): Promise<Snapshot> => {
@@ -187,7 +205,7 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
   await page
     .getByRole("navigation")
     .getByRole("button")
-    .filter({ hasText: sessionId!.slice(0, 8) })
+    .filter({ hasText: `Pi session ID：${created.nativeId}` })
     .click();
   await page.evaluate(() => {
     (window as Window & { rejectClipboard?: () => void }).rejectClipboard?.();
@@ -259,14 +277,23 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
     "release",
     "prompt",
   ]);
-  await page.getByText(/最近操作收據/).click();
-  const acceptedReceipts = page.getByText(/ACCEPTED/);
-  const acceptedCount = await acceptedReceipts.count();
-  for (let index = 0; index < acceptedCount; index++) {
-    await expect(acceptedReceipts.nth(index)).toContainText(
-      "已接受，不代表執行完成",
+  await expectNoReceiptUi(page);
+  await expect
+    .poll(async () => savedReceipts(page))
+    .toEqual(
+      expect.arrayContaining(
+        operationRequests
+          .filter((operation) => operation.kind !== "release")
+          .map((operation) =>
+            expect.objectContaining({
+              operationId: operation.operationId,
+              sessionId: operation.sessionId,
+              kind: operation.kind,
+              status: expect.stringMatching(/ACCEPTED|HANDLED/),
+            }),
+          ),
+      ),
     );
-  }
   await expect(draft).toHaveValue("");
   await expect(page.getByText("fast", { exact: true })).toHaveCount(1);
   await expect(page.getByText("keep my draft", { exact: true })).toHaveCount(0);

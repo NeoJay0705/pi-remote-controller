@@ -1,4 +1,11 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
@@ -32,6 +39,8 @@ describe("native session discovery", () => {
     const joinedBytes = `${header(joinedId)}${JSON.stringify({ type: "message", id: "history-entry", parentId: null, message: { role: "user", content: "unchanged history" } })}\n`;
     await writeFile(joinedFile, joinedBytes, { mode: 0o600 });
     await writeFile(unjoinedFile, header(unjoinedId), { mode: 0o600 });
+    const unjoinedFileUpdatedAt = new Date("2020-01-02T03:04:05Z");
+    await utimes(unjoinedFile, unjoinedFileUpdatedAt, unjoinedFileUpdatedAt);
     const config: WorkspaceConfig = {
       port: 0,
       publicOrigin: "http://127.0.0.1",
@@ -69,7 +78,12 @@ describe("native session discovery", () => {
       });
       expect(list.statusCode).toBe(200);
       expect(list.json()).toEqual([
-        { file: unjoinedFile, id: unjoinedId, nameInfo: { status: "unnamed" } },
+        {
+          file: unjoinedFile,
+          id: unjoinedId,
+          nameInfo: { status: "unnamed" },
+          fileUpdatedAt: unjoinedFileUpdatedAt.getTime(),
+        },
       ]);
       const duplicate = await app.inject({
         method: "POST",

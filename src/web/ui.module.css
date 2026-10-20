@@ -48,7 +48,6 @@
 .sidebar button,
 .actions button,
 .draft button,
-.receipts button,
 .cleared button,
 .older {
   border: 1px solid #827a6e;
@@ -92,30 +91,31 @@
   margin-top: auto;
 }
 .main {
+  --composer-horizontal-padding: clamp(12px, 3vw, 32px);
   min-width: 0;
+  min-height: 0;
   flex: 1;
   display: flex;
   flex-direction: column;
   max-height: 100dvh;
+  overflow-y: auto;
 }
 .header {
-  min-height: 68px;
+  flex: none;
+  height: 60px;
+  min-height: 60px;
   border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 22px;
+  gap: 12px;
+  padding: 8px 22px;
 }
-.header div {
+.headerName {
   min-width: 0;
-  display: grid;
-  gap: 4px;
-}
-.header small,
-.header div > span {
-  color: #514b40;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .connection {
   margin-left: auto;
@@ -124,6 +124,31 @@
 }
 .online {
   color: #235b34;
+}
+.information {
+  flex: none;
+  max-height: min(38dvh, 320px);
+  overflow: auto;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 22px;
+  overflow-wrap: anywhere;
+}
+.identityInfo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+}
+.runtime {
+  flex: none;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.infoToggle {
+  flex: none;
+  white-space: nowrap;
+}
+.infoShort {
+  display: none;
 }
 .status {
   display: flex;
@@ -299,9 +324,16 @@
   background: #fff;
 }
 .controls {
+  flex: none;
   border-top: 1px solid var(--line);
-  padding: 12px clamp(12px, 3vw, 32px);
+  padding: 12px var(--composer-horizontal-padding);
   background: var(--panel);
+}
+.main > p[role="status"],
+.main > p[role="alert"] {
+  margin: 0;
+  padding: 8px var(--composer-horizontal-padding);
+  overflow-wrap: anywhere;
 }
 .actions {
   display: flex;
@@ -320,15 +352,23 @@
   border-color: #8a2626 !important;
 }
 .draft {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 132px;
   gap: 9px;
-  align-items: flex-end;
+  align-items: stretch;
+}
+.draftActions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .draft textarea {
+  width: 100%;
+  height: 140px;
   flex: 1;
   min-width: 0;
   resize: vertical;
-  min-height: 62px;
+  min-height: 100px;
   max-height: 200px;
   background: #fff;
   color: var(--ink);
@@ -340,19 +380,6 @@
 .draft button {
   background: #e8dfca;
   border-color: #75643e;
-}
-.receipts {
-  border-top: 1px solid var(--line);
-  padding: 8px 20px;
-  max-height: 130px;
-  overflow: auto;
-  color: #514b40;
-}
-.receipts details > div {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  padding: 4px;
 }
 .error {
   background: #f4dfda;
@@ -454,10 +481,27 @@
     font-size: 22px;
   }
   .header {
-    padding: 10px 12px;
+    padding: 8px 10px;
+    gap: 7px;
   }
-  .header small {
+  .headerName {
+    max-width: 40%;
+  }
+  .infoLong {
+    display: none;
+  }
+  .infoShort {
+    display: inline;
+  }
+  .runtime {
     font-size: 10px;
+    flex: none;
+  }
+  .runtimePrefix {
+    display: none;
+  }
+  .information {
+    padding: 8px 12px;
   }
   .status {
     padding: 9px 12px;
@@ -470,25 +514,28 @@
     padding: 14px 12px;
   }
   .draft {
-    flex-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr);
   }
   .draft textarea {
-    flex-basis: 100%;
     min-height: 78px;
+    height: 100px;
   }
-  .draft button {
-    flex: 1;
+  .draftActions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .draftActions button {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
+  }
+
+  .main {
+    --composer-horizontal-padding: 10px;
   }
   .controls {
-    padding: 10px;
+    padding: 10px var(--composer-horizontal-padding);
   }
   .actions button {
     flex: 1;
-  }
-  .receipts {
-    padding: 7px 12px;
-  }
-  .receipts details > div {
-    flex-wrap: wrap;
   }
 }

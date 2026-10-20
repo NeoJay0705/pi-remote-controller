@@ -211,6 +211,7 @@ export interface NativeCandidate {
   id?: string;
   error?: string;
   nameInfo?: SessionNameInfo;
+  fileUpdatedAt?: number;
 }
 export interface NativeListOptions {
   maxBytes?: number;
@@ -251,7 +252,14 @@ export async function listNative(
               sharedBudget: budget,
               expectedNativeId: v.id,
             });
-      files.push({ file: v.file, id: v.id, nameInfo });
+      files.push({
+        file: v.file,
+        id: v.id,
+        nameInfo,
+        ...(v.fileUpdatedAt === undefined
+          ? {}
+          : { fileUpdatedAt: v.fileUpdatedAt }),
+      });
     } catch (error) {
       const code = (error as Error)?.message;
       files.push({

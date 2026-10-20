@@ -281,7 +281,21 @@ export function createApp(
               sharedBudget: budget,
             })
           : { status: "error", code: "invalid_session_config" };
-        sessions.push({ ...session, nameInfo });
+        let fileUpdatedAt: number | undefined;
+        if (project) {
+          try {
+            const metadata = await inspectNative(session.nativeFile, project);
+            if (metadata.id === session.nativeId)
+              fileUpdatedAt = metadata.fileUpdatedAt;
+          } catch {
+            // A stale managed file only makes its timestamp unknown.
+          }
+        }
+        sessions.push({
+          ...session,
+          nameInfo,
+          ...(fileUpdatedAt === undefined ? {} : { fileUpdatedAt }),
+        });
       }
       return sessions;
     } catch (e) {

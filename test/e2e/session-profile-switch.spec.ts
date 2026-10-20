@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import {
+  ensureInformationClosed,
+  ensureInformationOpen,
+  expectCurrentAppId,
+  expectPiSessionId,
+} from "./ui-helpers.js";
 
 const token = "browser-fixture-owner-token-0123456789";
 const artifacts = resolve(".test-artifacts/session-profile-switch-v1");
@@ -40,8 +46,9 @@ async function createSession(page: Page) {
     id: string;
     nativeId: string;
   };
+  await expectCurrentAppId(page, id);
   await closeSidebar(page);
-  await expect(page.getByLabel("Pi session ID")).toContainText(nativeId);
+  await expectPiSessionId(page, nativeId);
   return { id, nativeId };
 }
 
@@ -51,12 +58,17 @@ async function selectManaged(page: Page, id: string) {
     !(await page.getByRole("complementary").isVisible())
   )
     await page.getByRole("button", { name: "☰" }).click();
+  const sessions = (await (
+    await page.request.get("/api/v1/sessions")
+  ).json()) as Array<{ id: string; nativeId: string }>;
+  const nativeId = sessions.find((session) => session.id === id)?.nativeId;
+  expect(nativeId).toBeTruthy();
   await page
     .locator("nav button")
-    .filter({ hasText: id.slice(0, 8) })
+    .filter({ hasText: `Pi session ID：${nativeId}` })
     .click();
   await closeSidebar(page);
-  await expect(page.locator("header small")).toContainText(id);
+  await expectCurrentAppId(page, id);
 }
 
 const panel = (page: Page) =>
@@ -64,6 +76,7 @@ const panel = (page: Page) =>
 const savedText = (page: Page) => page.getByLabel("已保存 Session Profile");
 
 async function openProfile(page: Page) {
+  await ensureInformationOpen(page);
   const profilePanel = panel(page);
   const select = profilePanel.getByLabel("待選 Session Profile");
   if (!(await select.isVisible()))
@@ -92,6 +105,7 @@ test("cold profile save preserves draft and survives reload without starting Pi"
 }, testInfo) => {
   await openApp(page);
   const session = await createSession(page);
+  await ensureInformationOpen(page);
   const profilePanel = panel(page);
   const profileSelect = profilePanel.getByLabel("待選 Session Profile");
   await expect(profilePanel.locator("details > summary")).toBeVisible();
@@ -144,6 +158,7 @@ test("cold profile save preserves draft and survives reload without starting Pi"
     await page.getByRole("button", { name: "☰" }).click();
   await expect(page.getByText("受管 Sessions")).toBeVisible();
   await selectManaged(page, session.id);
+  await ensureInformationOpen(page);
   await expect(savedText(page)).toContainText("fake-alt");
 });
 
@@ -159,11 +174,16 @@ test("active switch applies actual profile and accepts a unique next prompt whil
   await chooseProfile(page, "fake-alt");
   await panel(page).getByRole("button", { name: "套用 Profile" }).click();
   await expect(savedText(page)).toContainText("fake-alt");
-  await expect(page.getByText("fake-alt-model", { exact: true })).toBeVisible();
+  await ensureInformationOpen(page);
+  const information = page.getByRole("region", { name: "Session 設定與資訊" });
   await expect(
-    page.getByText("fake-alt-provider", { exact: true }),
+    information.getByText("fake-alt-model", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("medium", { exact: true })).toBeVisible();
+  await expect(
+    information.getByText("fake-alt-provider", { exact: true }),
+  ).toBeVisible();
+  await expect(information.getByText("medium", { exact: true })).toBeVisible();
+  await ensureInformationClosed(page);
   await expect(page.getByLabel("訊息草稿")).toHaveValue(
     "draft after profile switch",
   );
@@ -219,9 +239,7 @@ test("busy runtime disables apply and permits it after work settles", async ({
   const nonce = `profile-busy-${Date.now()}`;
   await page.getByLabel("訊息草稿").fill(`hold:${nonce}`);
   await page.getByRole("button", { name: "Prompt" }).click();
-  await expect(page.getByText("Runtime").locator("..")).toContainText(
-    "running",
-  );
+  await expect(page.getByLabel("Runtime：running")).toBeVisible();
   await chooseProfile(page, "fake-alt");
   await expect(
     panel(page).getByRole("button", { name: "套用 Profile" }),
@@ -254,6 +272,7 @@ test("external window updates saved revision and generation guard protects sessi
     await chooseProfile(external, "fake-alt");
     await panel(external).getByRole("button", { name: "套用 Profile" }).click();
     await expect(savedText(external)).toContainText("fake-alt");
+    await ensureInformationOpen(page);
     await expect(savedText(page)).toContainText("fake-alt");
     await openProfile(page);
     await expect(panel(page).getByLabel("待選 Session Profile")).toHaveValue(
@@ -333,6 +352,7 @@ test("external window updates saved revision and generation guard protects sessi
     expect(firstReceipt.ok()).toBe(true);
     expect(await firstReceipt.json()).toMatchObject({ status: "ACCEPTED" });
     expect(operationPostCount).toBe(1);
+    await ensureInformationOpen(page);
     await expect(savedText(page)).toContainText("（fake）");
     await expect(panel(page).getByLabel("待選 Session Profile")).toHaveValue(
       "fake",

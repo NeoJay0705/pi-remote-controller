@@ -13,6 +13,7 @@ export type Session = {
   profileId: string;
   profileRevision: number;
   nameInfo?: SessionNameInfo;
+  fileUpdatedAt?: number;
 };
 export type HistoryEntry = {
   id: string;
@@ -35,6 +36,7 @@ export type NativeCandidate = {
   file: string;
   error?: string;
   nameInfo?: SessionNameInfo;
+  fileUpdatedAt?: number;
 };
 export function mergeActiveHistory(
   old: HistoryEntry[],

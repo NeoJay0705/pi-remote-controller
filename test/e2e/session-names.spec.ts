@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { randomUUID, createHash } from "node:crypto";
+import { expectCurrentAppId, expectPiSessionId } from "./ui-helpers.js";
 import { resolve, join } from "node:path";
 
 async function login(page: Page): Promise<void> {
@@ -23,10 +24,17 @@ async function selectManagedSession(
   page: Page,
   idPrefix: string,
 ): Promise<void> {
+  const sessions = (await (
+    await page.request.get("/api/v1/sessions")
+  ).json()) as Array<{ id: string; nativeId: string }>;
+  const nativeId = sessions.find((session) =>
+    session.id.startsWith(idPrefix),
+  )?.nativeId;
+  expect(nativeId).toBeTruthy();
   const button = page
     .getByRole("navigation")
     .getByRole("button")
-    .filter({ hasText: idPrefix });
+    .filter({ hasText: `Pi session ID：${nativeId}` });
   await button.scrollIntoViewIfNeeded();
   await button.click();
 }
@@ -45,7 +53,9 @@ async function createSession(
   name: string,
 ): Promise<{ appId: string; nativeId: string }> {
   await openSidebar(page);
-  const appIdBefore = await page.locator("header small").innerText();
+  const appIdBefore = await page
+    .locator("header")
+    .getAttribute("data-session-id");
   await page.getByLabel("Session 名稱（選填）").fill(name);
   const createdResponse = page.waitForResponse(
     (response) =>
@@ -56,13 +66,11 @@ async function createSession(
   const response = await createdResponse;
   expect(response.status()).toBe(201);
   const record = (await response.json()) as { id: string; nativeId: string };
-  await expect
-    .poll(async () => page.locator("header small").innerText())
-    .not.toBe(appIdBefore);
-  await expect(page.locator("header small")).toContainText(
-    `App ID：${record.id}`,
+  await expectCurrentAppId(page, record.id);
+  expect(await page.locator("header").getAttribute("data-session-id")).not.toBe(
+    appIdBefore,
   );
-  await expect(page.getByLabel("Pi session ID")).toContainText(record.nativeId);
+  await expectPiSessionId(page, record.nativeId);
   await closeSidebar(page);
   return { appId: record.id, nativeId: record.nativeId };
 }
@@ -78,7 +86,7 @@ test("creates named and unnamed sessions with distinct app and Pi IDs", async ({
   expect(first.appId).not.toBe(second.appId);
   expect(first.nativeId).not.toBe(second.nativeId);
   await expect(page.locator("header strong")).toHaveText("中文工作 🚀");
-  await expect(page.getByLabel("Pi session ID")).toContainText(second.nativeId);
+  await expectPiSessionId(page, second.nativeId);
   await expect(page.locator("header strong")).not.toContainText(
     second.nativeId,
   );
@@ -164,9 +172,7 @@ test("refreshes a native candidate before importing and preserves the source has
   const response = await createdResponse;
   expect(response.status()).toBe(201);
   const record = (await response.json()) as { id: string };
-  await expect(page.locator("header small")).toContainText(
-    `App ID：${record.id}`,
-  );
+  await expectCurrentAppId(page, record.id);
   await expect(page.locator("header strong")).toHaveText("既有原名");
   expect(
     createHash("sha256")
@@ -223,9 +229,7 @@ test("retains the HTTP name after an actual SSE snapshot and refreshes external 
   await selectManagedSession(page, created.appId.slice(0, 8));
   await closeSidebar(page);
   await expect(page.locator("header strong")).toHaveText("外部更新名稱");
-  await expect(page.getByLabel("Pi session ID")).toContainText(
-    created.nativeId,
-  );
+  await expectPiSessionId(page, created.nativeId);
   await page.waitForFunction(
     () =>
       (window as typeof window & { __sessionSnapshots?: number })
@@ -256,9 +260,7 @@ test("keeps long and markup-like names as contained plain text on desktop and mo
   const markupName = '<img src=x onerror="window.__sessionNameXss=1">';
   const created = await createSession(page, markupName);
   await expect(page.locator("header strong")).toHaveText(markupName);
-  await expect(page.getByLabel("Pi session ID")).toContainText(
-    created.nativeId,
-  );
+  await expectPiSessionId(page, created.nativeId);
   await expect(page.locator("header img")).toHaveCount(0);
   expect(
     await page.evaluate(
@@ -291,25 +293,19 @@ test("selects a late managed session by pointer in a long mobile sidebar", async
   const target = created[7]!;
   await selectManagedSession(page, first.appId.slice(0, 8));
   await expect(page.locator("header strong")).toHaveText("手機長清單 1");
-  await expect(page.locator("header small")).toContainText(
-    `App ID：${first.appId}`,
-  );
-  await expect(page.getByLabel("Pi session ID")).toContainText(first.nativeId);
+  await expectCurrentAppId(page, first.appId);
+  await expectPiSessionId(page, first.nativeId);
 
   await openSidebar(page);
   await selectManagedSession(page, target.appId.slice(0, 8));
   await expect(page.locator("header strong")).toHaveText("手機長清單 8");
   await expect(page.locator("header strong")).not.toHaveText("手機長清單 1");
-  await expect(page.locator("header small")).toContainText(
-    `App ID：${target.appId}`,
+  await expectCurrentAppId(page, target.appId);
+  await expect(page.locator("header")).not.toHaveAttribute(
+    "data-session-id",
+    first.appId,
   );
-  await expect(page.locator("header small")).not.toContainText(
-    `App ID：${first.appId}`,
-  );
-  await expect(page.getByLabel("Pi session ID")).toContainText(target.nativeId);
-  await expect(page.getByLabel("Pi session ID")).not.toContainText(
-    first.nativeId,
-  );
+  await expectPiSessionId(page, target.nativeId);
   await closeSidebar(page);
 });
 

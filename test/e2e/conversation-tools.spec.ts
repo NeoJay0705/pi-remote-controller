@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { expectCurrentAppId } from "./ui-helpers.js";
 
 type Descriptor = { gateDir: string };
 type HistoryEntry = {
@@ -63,12 +64,16 @@ test("subagent snapshots remain request-scoped, safe, and recoverable", async ({
   await expect(page.getByText("受管 Sessions")).toBeVisible();
   await page.getByRole("button", { name: /新建 Session/ }).click();
   await sidebar(page, false);
-  const appIdHeader = page.locator("header small");
-  await expect(appIdHeader).toContainText(/App ID：[\w-]+/);
-  const sessionId = (await appIdHeader.innerText()).match(
-    /App ID：([\w-]+)/,
-  )?.[1];
+  const appIdHeader = page.locator("header");
+  await expect(appIdHeader).toHaveAttribute(
+    "data-session-id",
+    /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i,
+  );
+  const sessionId = await appIdHeader.getAttribute("data-session-id");
   expect(sessionId).toBeTruthy();
+  const initialSnapshot = (await (
+    await page.request.get(`/api/v1/sessions/${sessionId}/snapshot`)
+  ).json()) as Snapshot;
   const history = async (): Promise<HistoryEntry[]> => {
     const result = await page.request.get(
       `/api/v1/sessions/${sessionId}/history`,
@@ -100,7 +105,7 @@ test("subagent snapshots remain request-scoped, safe, and recoverable", async ({
     parentCard.getByText("父 agent 等待子 agent 回報", { exact: false }),
   ).toBeVisible();
   await expect(parentCard).toContainText("執行中");
-  await expect(page.getByText(/Runtime\s+running/)).toBeVisible();
+  await expect(page.getByLabel("Runtime：running")).toBeVisible();
 
   const progressGate = resolve(descriptor.gateDir, `${nonce}.progress`);
   await gate(progressGate);
@@ -118,7 +123,7 @@ test("subagent snapshots remain request-scoped, safe, and recoverable", async ({
   await gate(resolve(descriptor.gateDir, `${nonce}.finish`));
   await expect(demoGroup.getByText(`tools-done-${nonce}`)).toBeVisible();
   await expect(demoGroup.getByText(`child-complete-${nonce}`)).toBeVisible();
-  await expect(page.getByText(/Runtime\s+idle/)).toBeVisible();
+  await expect(page.getByLabel("Runtime：idle")).toBeVisible();
   await expect(parentCard).toContainText("呼叫完成");
 
   const simpleNonce = randomUUID();
@@ -167,11 +172,11 @@ test("subagent snapshots remain request-scoped, safe, and recoverable", async ({
   await sidebar(page, true);
   const savedSession = page
     .locator("nav button")
-    .filter({ hasText: sessionId!.slice(0, 8) });
+    .filter({ hasText: `Pi session ID：${initialSnapshot.nativeId}` });
   await expect(savedSession).toBeVisible();
   await savedSession.click();
   await sidebar(page, false);
-  await expect(page.locator("header small")).toContainText(sessionId!);
+  await expectCurrentAppId(page, sessionId!);
   await expect.poll(() => requestFor(demo)).toBeTruthy();
   const persistedDemoRequest = (await requestFor(demo))!;
   const persistedGroup = page.locator(
@@ -196,30 +201,27 @@ test("subagent snapshots remain request-scoped, safe, and recoverable", async ({
   await sidebar(page, true);
   await page.getByRole("button", { name: /新建 Session/ }).click();
   await sidebar(page, false);
-  const otherAppIdHeader = page.locator("header small");
+  const otherAppIdHeader = page.locator("header");
   await expect
     .poll(async () => {
-      const text = await otherAppIdHeader.innerText();
-      const id = text.match(/App ID：([\w-]+)/)?.[1];
+      const id = await otherAppIdHeader.getAttribute("data-session-id");
       return id && id !== sessionId ? id : undefined;
     })
     .toBeTruthy();
-  const otherSessionId = (await otherAppIdHeader.innerText()).match(
-    /App ID：([\w-]+)/,
-  )?.[1];
+  const otherSessionId = await otherAppIdHeader.getAttribute("data-session-id");
   expect(otherSessionId).toBeTruthy();
   expect(otherSessionId).not.toBe(sessionId);
-  await expect(page.getByText(/Runtime\s+released/)).toBeVisible();
+  await expect(page.getByLabel("Runtime：released")).toBeVisible();
   await expect(
     page.getByText(`tools-done-${nonce}`, { exact: false }),
   ).toHaveCount(0);
   await sidebar(page, true);
   await page
     .locator("nav button")
-    .filter({ hasText: sessionId!.slice(0, 8) })
+    .filter({ hasText: `Pi session ID：${initialSnapshot.nativeId}` })
     .click();
   await sidebar(page, false);
-  await expect(page.locator("header small")).toContainText(sessionId!);
+  await expectCurrentAppId(page, sessionId!);
   await expect(
     page.getByText(`tools-done-${nonce}`, { exact: false }),
   ).toBeVisible();

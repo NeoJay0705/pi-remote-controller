@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import { expectPiSessionId } from "./ui-helpers.js";
 
 type Descriptor = { cwd: string; sessionDir: string };
 
@@ -111,7 +112,7 @@ test("imports native history with pagination and browser security on desktop and
   await sidebar.getByRole("button", { name: "加入選取的 session" }).click();
   if (mobile) await sidebar.getByRole("button", { name: "關閉" }).click();
 
-  await expect(page.getByLabel("Pi session ID")).toContainText(nativeId);
+  await expectPiSessionId(page, nativeId);
   await expect(
     page.getByText("newest-history-proof", { exact: false }),
   ).toHaveCount(1);

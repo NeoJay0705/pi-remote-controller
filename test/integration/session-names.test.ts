@@ -5,6 +5,10 @@ import {
   mkdir,
   writeFile,
   readdir,
+  utimes,
+  stat,
+  unlink,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,7 +102,10 @@ describe("session naming HTTP contract", () => {
       const unnamed = await post({ projectId: "p", profileId: "f" });
       expect(unnamed.statusCode).toBe(201);
       expect(unnamed.json().nameInfo).toEqual({ status: "unnamed" });
+      const fixedTime = new Date("2020-04-05T06:07:08.000Z");
+      await utimes(created.nativeFile, fixedTime, fixedTime);
       const before = await readFile(created.nativeFile);
+      const beforeMtime = (await stat(created.nativeFile)).mtimeMs;
       const refused = await post({
         projectId: "p",
         profileId: "f",
@@ -116,6 +123,9 @@ describe("session naming HTTP contract", () => {
         status: "named",
         name: "中文工作 🚀",
       });
+      expect(list.json()[0].fileUpdatedAt).toBe(fixedTime.getTime());
+      expect(await readFile(created.nativeFile)).toEqual(before);
+      expect((await stat(created.nativeFile)).mtimeMs).toBe(beforeMtime);
       const snapshot = await app.inject({
         method: "GET",
         url: `/api/v1/sessions/${created.id}/snapshot`,
@@ -135,19 +145,33 @@ describe("session naming HTTP contract", () => {
         candidateFile,
         `${JSON.stringify({ type: "session", version: 3, id: candidateId, cwd })}\n${JSON.stringify({ type: "session_info", id: "i", parentId: null, name: "候選名稱" })}\n`,
       );
+      await utimes(candidateFile, fixedTime, fixedTime);
+      const candidateHash = createHash("sha256")
+        .update(await readFile(candidateFile))
+        .digest("hex");
+      const candidateMtime = (await stat(candidateFile)).mtimeMs;
       const candidates = await app.inject({
         method: "GET",
         url: "/api/v1/projects/p/native-sessions",
         headers: { cookie },
       });
+      expect(await readFile(candidateFile)).toEqual(
+        Buffer.from(
+          `${JSON.stringify({ type: "session", version: 3, id: candidateId, cwd })}\n${JSON.stringify({ type: "session_info", id: "i", parentId: null, name: "候選名稱" })}\n`,
+        ),
+      );
+      expect((await stat(candidateFile)).mtimeMs).toBe(candidateMtime);
+      expect(
+        createHash("sha256")
+          .update(await readFile(candidateFile))
+          .digest("hex"),
+      ).toBe(candidateHash);
       expect(candidates.json()).toContainEqual({
         file: candidateFile,
         id: candidateId,
         nameInfo: { status: "named", name: "候選名稱" },
+        fileUpdatedAt: fixedTime.getTime(),
       });
-      const candidateHash = createHash("sha256")
-        .update(await readFile(candidateFile))
-        .digest("hex");
       const imported = await post({
         projectId: "p",
         profileId: "f",
@@ -159,6 +183,7 @@ describe("session naming HTTP contract", () => {
           .update(await readFile(candidateFile))
           .digest("hex"),
       ).toBe(candidateHash);
+      expect((await stat(candidateFile)).mtimeMs).toBe(candidateMtime);
       const candidateSession = imported.json() as {
         nativeId: string;
         nativeFile: string;
@@ -181,6 +206,36 @@ describe("session naming HTTP contract", () => {
               session.nativeId === candidateSession.nativeId,
           ).nameInfo,
       ).toEqual({ status: "error", code: "native_id_mismatch" });
+      const mismatchedSession = mismatched
+        .json()
+        .find(
+          (session: { nativeId: string }) =>
+            session.nativeId === candidateSession.nativeId,
+        );
+      expect(mismatchedSession).not.toHaveProperty("fileUpdatedAt");
+      expect(mismatched.statusCode).toBe(200);
+      await unlink(created.nativeFile);
+      const missingManaged = await app.inject({
+        method: "GET",
+        url: "/api/v1/sessions",
+        headers: { cookie },
+      });
+      expect(missingManaged.statusCode).toBe(200);
+      const missingEntry = missingManaged
+        .json()
+        .find((session: { id: string }) => session.id === created.id);
+      expect(missingEntry).not.toHaveProperty("fileUpdatedAt");
+      await symlink(candidateFile, created.nativeFile);
+      const symlinkManaged = await app.inject({
+        method: "GET",
+        url: "/api/v1/sessions",
+        headers: { cookie },
+      });
+      expect(symlinkManaged.statusCode).toBe(200);
+      const symlinkEntry = symlinkManaged
+        .json()
+        .find((session: { id: string }) => session.id === created.id);
+      expect(symlinkEntry).not.toHaveProperty("fileUpdatedAt");
     } finally {
       await app.close();
       await runtime.shutdown();

@@ -1,4 +1,10 @@
 import { test, expect } from "@playwright/test";
+import {
+  ensureInformationOpen,
+  expectNoReceiptUi,
+  expectPiSessionId,
+  savedReceipts,
+} from "./ui-helpers.js";
 test("login and create managed native session", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(Crypto.prototype, "randomUUID", {
@@ -56,13 +62,22 @@ test("login and create managed native session", async ({ page }) => {
   expect(palette.background).toBe("rgb(250, 247, 240)");
   expect(palette.color).toBe("rgb(25, 25, 25)");
   expect(emptyProjectNativeRequests).toEqual([]);
+  const createdResponse = page.waitForResponse(
+    (item) =>
+      item.request().method() === "POST" &&
+      new URL(item.url()).pathname === "/api/v1/sessions",
+  );
   await page.getByRole("button", { name: /新建 Session/ }).click();
+  const created = (await (await createdResponse).json()) as {
+    id: string;
+    nativeId: string;
+  };
   if (page.viewportSize()?.width && page.viewportSize()!.width <= 700)
     await page
       .getByRole("complementary")
       .getByRole("button", { name: "關閉" })
       .click();
-  await expect(page.getByLabel("Pi session ID")).toBeVisible();
+  await expectPiSessionId(page, created.nativeId);
   const runtimeStatus = page
     .getByRole("status")
     .filter({ hasText: "Pi 尚未啟動" });
@@ -73,7 +88,12 @@ test("login and create managed native session", async ({ page }) => {
   expect(missing.headers()["content-type"]).toMatch(/application\/json/);
   await page.getByLabel("訊息草稿").fill("normal");
   await page.getByRole("button", { name: "Prompt" }).click();
-  await expect(page.getByText("fake-model")).toBeVisible();
+  await ensureInformationOpen(page);
+  await expect(
+    page
+      .getByRole("region", { name: "Session 設定與資訊" })
+      .getByText("fake-model"),
+  ).toBeVisible();
   await expect(
     page.getByText("streaming response", { exact: true }),
   ).toBeVisible();
@@ -83,8 +103,15 @@ test("login and create managed native session", async ({ page }) => {
   expect(operationIds[0]).toMatch(
     /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   );
-  await page.getByText(/最近操作收據/).click();
-  await expect(
-    page.getByText(/prompt · ACCEPTED|prompt · HANDLED/),
-  ).toBeVisible();
+  await expectNoReceiptUi(page);
+  await expect
+    .poll(async () => savedReceipts(page))
+    .toContainEqual(
+      expect.objectContaining({
+        operationId: operationIds[0],
+        sessionId: created.id,
+        kind: "prompt",
+        status: expect.stringMatching(/ACCEPTED|HANDLED/),
+      }),
+    );
 });

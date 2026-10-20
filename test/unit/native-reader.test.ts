@@ -6,6 +6,8 @@ import {
   link,
   readFile,
   open,
+  stat,
+  utimes,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,6 +85,7 @@ describe("bounded native JSONL reader", () => {
       file,
       id: "replacement-native",
       nameInfo: { status: "unnamed" },
+      fileUpdatedAt: (await stat(file)).mtimeMs,
     });
     await expect(
       readNativePage(file, project, undefined, 100, {
@@ -92,6 +95,25 @@ describe("bounded native JSONL reader", () => {
     await expect(
       readNativeTail(file, project, { expectedNativeId: "native" }),
     ).rejects.toThrow("reload-required");
+  });
+  it("projects a fixed fd mtime through native metadata without changing the file", async () => {
+    const { file, project } = await fixture();
+    const fixedTime = new Date("2021-02-03T04:05:06.000Z");
+    await utimes(file, fixedTime, fixedTime);
+    const before = await readFile(file);
+    const beforeMtime = (await stat(file)).mtimeMs;
+
+    expect((await inspectNative(file, project)).fileUpdatedAt).toBe(
+      fixedTime.getTime(),
+    );
+    expect(await listNative(project)).toContainEqual({
+      file,
+      id: "native",
+      nameInfo: { status: "unnamed" },
+      fileUpdatedAt: fixedTime.getTime(),
+    });
+    expect(await readFile(file)).toEqual(before);
+    expect((await stat(file)).mtimeMs).toBe(beforeMtime);
   });
   it("ignores a partial UTF-8 tail and returns the last complete record", async () => {
     const { file, project } = await fixture();
@@ -116,6 +138,7 @@ describe("bounded native JSONL reader", () => {
       file,
       id: "native",
       nameInfo: { status: "unnamed" },
+      fileUpdatedAt: (await stat(file)).mtimeMs,
     });
     const sl = join(dir, "symlink.jsonl"),
       hl = join(dir, "hardlink.jsonl");
@@ -129,6 +152,7 @@ describe("bounded native JSONL reader", () => {
     expect(
       candidates.some((candidate) => candidate.file === bad && candidate.error),
     ).toBe(true);
+    expect(candidates).toContainEqual({ file: sl, error: "unsafe-path" });
   });
   it("follows only the tail parent branch and pages each entry once", async () => {
     const { dir, file, project } = await fixture();

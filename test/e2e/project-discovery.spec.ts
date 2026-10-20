@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { expectPiSessionId } from "./ui-helpers.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -15,7 +16,7 @@ test("discovers isolated projects and keeps sessions grouped", async ({
   await expect(selector.locator("option", { hasText: "repoA" })).toHaveCount(1);
   const baseline = (await (
     await page.request.get("/api/v1/sessions")
-  ).json()) as Array<{ id: string }>;
+  ).json()) as Array<{ id: string; nativeId: string }>;
   const baselineIds = new Set(baseline.map((session) => session.id));
   const descriptorPath = resolve(process.env.PRW_TEST_DESCRIPTOR!);
   const descriptor = JSON.parse(await readFile(descriptorPath, "utf8")) as {
@@ -31,19 +32,16 @@ test("discovers isolated projects and keeps sessions grouped", async ({
     await selector.selectOption({ label: projectName });
     const createButton = page.getByRole("button", { name: /新建 Session/ });
     await expect(createButton).toBeEnabled();
-    const nativeIdLabel = page.getByLabel("Pi session ID");
+    const createResponse = page.waitForResponse(
+      (item) =>
+        item.request().method() === "POST" &&
+        new URL(item.url()).pathname === "/api/v1/sessions",
+    );
     await createButton.click();
-    await expect
-      .poll(async () => {
-        const match = (await nativeIdLabel.innerText()).match(
-          /([0-9a-f-]{36})/i,
-        );
-        return match?.[1] && !seenNativeIds.has(match[1]) ? match[1] : "";
-      })
-      .toMatch(/^[0-9a-f-]{36}$/i);
-    const match = (await nativeIdLabel.innerText()).match(/([0-9a-f-]{36})/i);
-    expect(match).not.toBeNull();
-    const nativeId = match![1]!;
+    const { nativeId } = (await (await createResponse).json()) as {
+      nativeId: string;
+    };
+    await expectPiSessionId(page, nativeId);
     expect(seenNativeIds.has(nativeId)).toBe(false);
     seenNativeIds.add(nativeId);
     const response = await page.request.get("/api/v1/sessions");
@@ -101,17 +99,24 @@ test("discovers isolated projects and keeps sessions grouped", async ({
     const expected = await page.request
       .get("/api/v1/sessions")
       .then((response) => response.json())
-      .then((sessions: Array<{ id: string; projectId: string }>) =>
-        sessions
-          .filter((session) => session.projectId === projectId)
-          .map((session) => session.id.slice(0, 8))
-          .sort(),
+      .then(
+        (
+          sessions: Array<{ id: string; nativeId: string; projectId: string }>,
+        ) =>
+          sessions
+            .filter((session) => session.projectId === projectId)
+            .map((session) => session.nativeId)
+            .sort(),
       );
     const nav = page.getByRole("navigation");
     await expect
       .poll(async () =>
         (await nav.locator("button small").allTextContents())
-          .map((label) => label.match(/App ID：([0-9a-f]{8})/i)?.[1] ?? "")
+          .flatMap((label) =>
+            [...label.matchAll(/Pi session ID：([0-9a-f-]{36})/gi)].map(
+              (match) => match[1]!.trim(),
+            ),
+          )
           .sort(),
       )
       .toEqual(expected);
@@ -127,11 +132,9 @@ test("discovers isolated projects and keeps sessions grouped", async ({
     const nav = page.getByRole("navigation");
     const ownSession = nav
       .getByRole("button")
-      .filter({ hasText: record.id.slice(0, 8) });
+      .filter({ hasText: `Pi session ID：${record.nativeId}` });
     await ownSession.click();
-    await expect(page.getByLabel("Pi session ID")).toContainText(
-      record.nativeId,
-    );
+    await expectPiSessionId(page, record.nativeId);
   };
   await selectAndCheckNavigation("repoA", repoA);
   await selectAndCheckNavigation("repoB", repoB);

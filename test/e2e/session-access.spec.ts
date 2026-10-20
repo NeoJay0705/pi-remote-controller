@@ -3,6 +3,11 @@ import { createReadStream } from "node:fs";
 import { open, readFile, stat, appendFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
+import {
+  ensureInformationClosed,
+  ensureInformationOpen,
+  expectPiSessionId,
+} from "./ui-helpers.js";
 
 type Descriptor = { cwd: string; sessionDir: string };
 
@@ -63,9 +68,7 @@ test("recovers from initial history load failure without losing the draft", asyn
       .getByRole("complementary")
       .getByRole("button", { name: "關閉" })
       .click();
-  await expect(page.getByLabel("Pi session ID")).toContainText(
-    created.nativeId,
-  );
+  await expectPiSessionId(page, created.nativeId);
   const runtimeStatus = page
     .getByRole("status")
     .filter({ hasText: "Pi 尚未啟動" });
@@ -102,9 +105,7 @@ test("recovers from initial history load failure without losing the draft", asyn
   expect(operationRequests).toHaveLength(0);
   failHistory = false;
   await page.getByRole("button", { name: "重試載入" }).click();
-  await expect(page.getByLabel("Pi session ID")).toContainText(
-    created.nativeId,
-  );
+  await expectPiSessionId(page, created.nativeId);
   await expect(runtimeStatus).toBeVisible();
   await expect(runtimeStatus).toContainText("Pi 尚未啟動");
   await expect(page.getByLabel("訊息草稿")).toHaveValue(
@@ -212,7 +213,7 @@ test("imports and appends to native sessions without losing external history", a
   await sidebar.getByRole("button", { name: "加入選取的 session" }).click();
   if (mobile) await sidebar.getByRole("button", { name: "關閉" }).click();
 
-  await expect(page.getByLabel("Pi session ID")).toContainText(nativeId);
+  await expectPiSessionId(page, nativeId);
   await expect(
     page.getByText("latest-root-proof", { exact: false }),
   ).toHaveCount(1);
@@ -248,11 +249,11 @@ test("imports and appends to native sessions without losing external history", a
     sessionDir: descriptor.sessionDir,
     nativeCommand: `cd '${descriptor.cwd}' && pi --session-dir '${descriptor.sessionDir}' --session '${nativeId}'`,
   });
-  await expect(page.getByText(`App ID：${imported!.id}`)).toBeVisible();
   await expect(
     page.getByText(`cwd ${descriptor.cwd}`, { exact: false }),
   ).toBeHidden();
-  await page.getByText("Session 資訊").click();
+  await ensureInformationOpen(page);
+  await expect(page.getByText(`App ID：${imported!.id}`)).toBeVisible();
   await expect(
     page.getByText(`cwd ${descriptor.cwd}`, { exact: false }),
   ).toBeVisible();
@@ -271,7 +272,7 @@ test("imports and appends to native sessions without losing external history", a
     "請勿讓 Web 與原生 Pi 同時寫入",
   );
   await expect(sessionAccessWarning).toBeVisible();
-  await page.getByText("Session 資訊").click();
+  await ensureInformationClosed(page);
   await expect(sessionAccessWarning).toBeHidden();
   await expect(page.getByRole("button", { name: "交接 TUI" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Claim 回 Web" })).toHaveCount(

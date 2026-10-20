@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { Snapshot } from "../../src/shared/contracts.js";
+import { expectCurrentAppId } from "./ui-helpers.js";
 
 const ids = [
   "11111111-1111-4111-8111-111111111111",
@@ -162,11 +163,12 @@ async function loginAndSelect(page: Page, id: string = ids[0]) {
   if ((page.viewportSize()?.width ?? 1024) <= 700)
     await page.getByRole("button", { name: "☰" }).click();
   await expect(page.getByText("受管 Sessions")).toBeVisible();
+  const nativeId = fixtureSnapshot(id, "released").nativeId;
   await page
     .locator("nav button")
-    .filter({ hasText: id.slice(0, 8) })
+    .filter({ hasText: `Pi session ID：${nativeId}` })
     .click();
-  await expect(page.locator("header small")).toContainText(`App ID：${id}`);
+  await expectCurrentAppId(page, id);
   await expect(page.getByText("● 已連線", { exact: true })).toBeVisible();
   if ((page.viewportSize()?.width ?? 1024) <= 700)
     await expect(sidebar).toBeHidden();
@@ -549,7 +551,9 @@ test("message operation browser matrix, connectivity and chat scroll behavior", 
     await page.getByRole("button", { name: "☰" }).click();
   await page
     .locator("nav button")
-    .filter({ hasText: ids[0].slice(0, 8) })
+    .filter({
+      hasText: `Pi session ID：${fixtureSnapshot(ids[0], "released").nativeId}`,
+    })
     .click();
   await expect
     .poll(() => snapshotRequests.count)
@@ -626,22 +630,21 @@ test("mobile sidebar resize and session information reset", async ({
   await installTransport(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await loginAndSelect(page);
-  const details = page
-    .locator("details")
-    .filter({ has: page.getByText("Session 資訊", { exact: true }) });
-  await details.locator("summary").click();
-  await expect(details).toHaveAttribute("open", "");
+  const informationToggle = page.getByRole("button", {
+    name: "Session 設定與資訊",
+  });
+  await informationToggle.click();
+  await expect(informationToggle).toHaveAttribute("aria-expanded", "true");
   await page.getByRole("button", { name: "☰" }).click();
   await page.setViewportSize({ width: 1200, height: 900 });
   await expect(page.getByRole("main")).not.toHaveAttribute("inert", "");
   await expect(page.getByRole("complementary")).toBeVisible();
   await page
     .locator("nav button")
-    .filter({ hasText: ids[1].slice(0, 8) })
+    .filter({
+      hasText: `Pi session ID：${fixtureSnapshot(ids[1], "released").nativeId}`,
+    })
     .click();
-  await expect(page.locator("header small")).toContainText(`App ID：${ids[1]}`);
-  const next = page
-    .locator("details")
-    .filter({ has: page.getByText("Session 資訊", { exact: true }) });
-  await expect(next).not.toHaveAttribute("open", "");
+  await expectCurrentAppId(page, ids[1]);
+  await expect(informationToggle).toHaveAttribute("aria-expanded", "false");
 });

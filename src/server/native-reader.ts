@@ -34,6 +34,7 @@ export interface NativeMetadata {
   devino: string;
   headerhash: string;
   size: number;
+  fileUpdatedAt?: number;
 }
 export interface NativeTail {
   id: string | null;
@@ -166,6 +167,13 @@ async function inspectOpened(
   )
     throw new Error("invalid-header");
   if (header.cwd !== project.cwd) throw new Error("native_cwd_mismatch");
+  const fileUpdatedAt = after.mtimeMs;
+  const validFileUpdatedAt =
+    Number.isFinite(fileUpdatedAt) &&
+    fileUpdatedAt >= 0 &&
+    Number.isFinite(new Date(fileUpdatedAt).getTime())
+      ? fileUpdatedAt
+      : undefined;
   return {
     id: header.id,
     cwd: header.cwd,
@@ -176,6 +184,9 @@ async function inspectOpened(
       .update(first.subarray(0, lf + 1))
       .digest("hex"),
     size: after.size,
+    ...(validFileUpdatedAt === undefined
+      ? {}
+      : { fileUpdatedAt: validFileUpdatedAt }),
   };
 }
 export async function inspectNative(

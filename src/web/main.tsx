@@ -17,6 +17,7 @@ import {
   api,
   mergeActiveHistory,
   type HistoryEntry,
+  type NativeCandidate,
   type Session,
 } from "./api.js";
 import { Conversation } from "./Conversation.js";
@@ -32,6 +33,11 @@ import { SessionProfile } from "./SessionProfile.js";
 import { copyText, createOperationId } from "./browser-support.js";
 import { canSubmitMessage, type MessageKind } from "./session-ui.js";
 import { sessionNameLabel } from "./session-names.js";
+import {
+  formatFileUpdatedAt,
+  sortManagedSessions,
+  sortNativeCandidates,
+} from "./session-list.js";
 import { normalizeSessionName } from "../shared/session-names.js";
 import styles from "./ui.module.css";
 import "./style.css";
@@ -69,14 +75,7 @@ function App() {
     [profile, setProfile] = useState(""),
     [newSessionName, setNewSessionName] = useState(""),
     [nameInfos, setNameInfos] = useState<Record<string, SessionNameInfo>>({}),
-    [nativeFiles, setNativeFiles] = useState<
-      Array<{
-        file: string;
-        id?: string;
-        error?: string;
-        nameInfo?: SessionNameInfo;
-      }>
-    >([]),
+    [nativeFiles, setNativeFiles] = useState<NativeCandidate[]>([]),
     [nativeFile, setNativeFile] = useState(""),
     [selected, setSelected] = useState(""),
     [snapshot, setSnapshot] = useState<Snapshot>(),
@@ -100,10 +99,10 @@ function App() {
         return [];
       }
     }),
-    [receiptStatus, setReceiptStatus] = useState<Record<string, string>>({}),
     [liveTools, setLiveTools] = useState<LiveToolsState>(emptyLiveTools),
     [notices, setNotices] = useState<string[]>([]),
     [mobileOpen, setMobileOpen] = useState(false),
+    [informationOpen, setInformationOpen] = useState(false),
     [manualCopy, setManualCopy] = useState<string>(),
     [isPinned, setIsPinned] = useState(true),
     [isMobile, setIsMobile] = useState(
@@ -276,6 +275,7 @@ function App() {
   }, [authenticated, project, sessions]);
   const selectSession = useCallback(async (id: string) => {
     const g = ++generation.current;
+    setInformationOpen(false);
     pinned.current = true;
     setIsPinned(true);
     pendingAnchor.current = undefined;
@@ -626,6 +626,7 @@ function App() {
       previousLeaf.current = undefined;
       setAuthenticated(false);
       setManualCopy(undefined);
+      setInformationOpen(false);
       setGlobalError("登入已逾期，請重新登入。");
       setSessionErrors({});
       setNameInfos({});
@@ -835,7 +836,12 @@ function App() {
           ),
         );
       if (frozen.generation === generation.current) {
-        reportSessionError(frozen.sessionId, failure.message);
+        reportSessionError(
+          frozen.sessionId,
+          status === "UNKNOWN" || status === "DISPATCHED"
+            ? `${failure.message} 操作結果尚未確認；不會自動重送，請勿直接重送。`
+            : failure.message,
+        );
         await sync(frozen.sessionId, frozen.generation);
         if (failure.status !== 401) await refreshLists().catch(() => undefined);
       }
@@ -927,7 +933,12 @@ function App() {
             status = "REJECTED";
         }
       }
-      reportSessionError(sessionId, (e as Error).message);
+      reportSessionError(
+        sessionId,
+        status === "UNKNOWN" || status === "DISPATCHED"
+          ? `${(e as Error).message} 操作結果尚未確認；不會自動重送，請勿直接重送。`
+          : (e as Error).message,
+      );
       setReceipts((old) =>
         old.map((r) => (r.operationId === operationId ? { ...r, status } : r)),
       );
@@ -958,20 +969,13 @@ function App() {
   async function checkReceipt(r: SavedReceipt) {
     try {
       const v = await api.receipt(r.operationId);
-      setReceiptStatus((old) => ({ ...old, [r.operationId]: v.status }));
       setReceipts((old) =>
         old.map((x) =>
           x.operationId === r.operationId ? { ...x, status: v.status } : x,
         ),
       );
-    } catch (e) {
-      setReceiptStatus((old) => ({
-        ...old,
-        [r.operationId]:
-          (e as { status?: number }).status === 404
-            ? "找不到；未重送"
-            : "查詢失敗",
-      }));
+    } catch {
+      // Receipt lookup remains internal; never retry the operation.
     }
   }
   useEffect(() => {
@@ -1119,10 +1123,11 @@ function App() {
             <option value="">
               {nativeFiles.length ? "選擇 session…" : "沒有尚未加入的 session"}
             </option>
-            {nativeFiles.map((n) => (
+            {sortNativeCandidates(nativeFiles).map((n) => (
               <option key={n.file} value={n.file} disabled={!n.id || !!n.error}>
                 {n.nameInfo ? `${sessionNameLabel(n.nameInfo)} · ` : ""}
-                {n.id || "Session ID 不可用"}
+                {n.id || "Session ID 不可用"} ·{" "}
+                {formatFileUpdatedAt(n.fileUpdatedAt)}
                 {n.error ? ` — ${n.error}` : ""}
               </option>
             ))}
@@ -1136,26 +1141,27 @@ function App() {
         </button>
         <div className={styles.sessionLabel}>受管 Sessions</div>
         <nav>
-          {sessions
-            .filter((s) => s.projectId === project)
-            .map((s) => (
-              <button
-                key={s.id}
-                className={selected === s.id ? styles.selected : ""}
-                onClick={() => {
-                  void selectSession(s.id);
-                  setMobileOpen(false);
-                }}
-              >
-                <span className={styles.sessionText}>
-                  {sessionNameLabel(nameInfos[s.id])}
-                </span>
-                <small className={styles.sessionText}>
-                  Pi session ID：{s.nativeId} · App ID：{s.id.slice(0, 8)} ·{" "}
-                  {s.profileId}
-                </small>
-              </button>
-            ))}
+          {sortManagedSessions(
+            sessions.filter((s) => s.projectId === project),
+          ).map((s) => (
+            <button
+              key={s.id}
+              className={selected === s.id ? styles.selected : ""}
+              onClick={() => {
+                void selectSession(s.id);
+                setMobileOpen(false);
+              }}
+            >
+              <span className={styles.sessionText}>
+                {sessionNameLabel(nameInfos[s.id])}
+              </span>
+              <small className={styles.sessionText}>
+                Pi session ID：{s.nativeId}
+                <br />
+                {formatFileUpdatedAt(s.fileUpdatedAt)}
+              </small>
+            </button>
+          ))}
         </nav>
         <button
           className={styles.logout}
@@ -1179,6 +1185,7 @@ function App() {
               setSessionErrors({});
               setGlobalError("");
               setManualCopy(undefined);
+              setInformationOpen(false);
               setSessions([]);
               setNameInfos({});
             });
@@ -1200,7 +1207,10 @@ function App() {
         className={styles.main}
         inert={mobileOpen && isMobile ? true : undefined}
       >
-        <header className={styles.header}>
+        <header
+          className={styles.header}
+          data-session-id={snapshot?.id || selected || ""}
+        >
           <button
             ref={menuRef}
             aria-expanded={mobileOpen}
@@ -1210,22 +1220,34 @@ function App() {
           >
             ☰
           </button>
-          <div>
-            <strong className={styles.sessionText}>
-              {snapshot
-                ? sessionNameLabel(nameInfos[selected])
-                : "選擇或建立 Session"}
-            </strong>
-            <span className={styles.sessionText} aria-label="Pi session ID">
-              Pi session ID：{snapshot?.nativeId || "—"}
-            </span>
-            <small>App ID：{snapshot?.id || selected || "—"}</small>
-          </div>
+          <strong className={styles.headerName}>
+            {snapshot
+              ? sessionNameLabel(nameInfos[selected])
+              : "選擇或建立 Session"}
+          </strong>
+          <span
+            className={styles.runtime}
+            aria-label={`Runtime：${snapshot?.runtimeState || "—"}`}
+          >
+            <span className={styles.runtimePrefix}>Runtime：</span>
+            {snapshot?.runtimeState || "—"}
+          </span>
           <span
             className={`${styles.connection} ${connected ? styles.online : ""}`}
           >
             {connected ? "● 已連線" : "○ 離線"}
           </span>
+          <button
+            className={styles.infoToggle}
+            aria-label="Session 設定與資訊"
+            aria-expanded={informationOpen}
+            aria-controls="session-information"
+            disabled={!snapshot || snapshot.id !== selected}
+            onClick={() => setInformationOpen((open) => !open)}
+          >
+            <span className={styles.infoLong}>設定與資訊</span>
+            <span className={styles.infoShort}>資訊</span>
+          </button>
         </header>
         {manualCopy !== undefined && (
           <section aria-label="手動複製">
@@ -1268,92 +1290,104 @@ function App() {
             </button>
           </div>
         ))}
-        {snapshot && (
-          <section className={styles.status}>
-            <span>
-              Runtime <b>{snapshot.runtimeState}</b>
-            </span>
-            <span>
-              Provider <b>{snapshot.actualProvider || "—"}</b>
-            </span>
-            <span>
-              Model <b>{snapshot.actualModel || "—"}</b>
-            </span>
-            <span>
-              Thinking <b>{snapshot.actualThinking || "—"}</b>
-            </span>
-          </section>
-        )}
-        {snapshot && snapshot.id === selected && (
-          <SessionProfile
-            key={`${snapshot.id}:${snapshot.profileRevision}`}
-            profiles={profiles}
-            snapshot={snapshot}
-            connected={connected}
-            online={navigator.onLine}
-            busy={busy}
-            onApply={(target) => void changeProfile(target)}
-          />
-        )}
-        {snapshot && (
-          <details key={selected} className={styles.sessionInfo}>
-            <summary>Session 資訊</summary>
-            <span>
-              cwd <b>{snapshot.cwd || "—"}</b>{" "}
-              {snapshot.cwd && (
-                <button
-                  onClick={() => {
-                    const g = generation.current;
-                    const frozenText = snapshot.cwd!;
-                    void copyText(frozenText).then((copied) => {
-                      if (!copied && g === generation.current)
-                        setManualCopy(frozenText);
-                    });
-                  }}
-                >
-                  複製 cwd
-                </button>
-              )}
-            </span>
-            <span>
-              Session dir <b>{snapshot.sessionDir || "—"}</b>{" "}
-              {snapshot.sessionDir && (
-                <button
-                  onClick={() => {
-                    const g = generation.current;
-                    const frozenText = snapshot.sessionDir!;
-                    void copyText(frozenText).then((copied) => {
-                      if (!copied && g === generation.current)
-                        setManualCopy(frozenText);
-                    });
-                  }}
-                >
-                  複製 session dir
-                </button>
-              )}
-            </span>
-            {snapshot.nativeCommand && (
-              <button
-                onClick={() => {
-                  const g = generation.current;
-                  const frozenText = snapshot.nativeCommand!;
-                  void copyText(frozenText).then((copied) => {
-                    if (!copied && g === generation.current)
-                      setManualCopy(frozenText);
-                  });
-                }}
-              >
-                複製原生 Pi 命令
-              </button>
+        {snapshot && informationOpen && (
+          <section
+            id="session-information"
+            className={styles.information}
+            role="region"
+            aria-label="Session 設定與資訊"
+          >
+            <div className={styles.identityInfo}>
+              <span>完整名稱：{sessionNameLabel(nameInfos[selected])}</span>
+              <span aria-label="Pi session ID">
+                Pi session ID：{snapshot.nativeId}
+              </span>
+              <span>App ID：{snapshot.id}</span>
+            </div>
+            <div className={styles.status}>
+              <span>
+                Runtime <b>{snapshot.runtimeState}</b>
+              </span>
+              <span>
+                Provider <b>{snapshot.actualProvider || "—"}</b>
+              </span>
+              <span>
+                Model <b>{snapshot.actualModel || "—"}</b>
+              </span>
+              <span>
+                Thinking <b>{snapshot.actualThinking || "—"}</b>
+              </span>
+            </div>
+            {snapshot.id === selected && (
+              <SessionProfile
+                key={`${snapshot.id}:${snapshot.profileRevision}`}
+                profiles={profiles}
+                snapshot={snapshot}
+                connected={connected}
+                online={navigator.onLine}
+                busy={busy}
+                onApply={(target) => void changeProfile(target)}
+              />
             )}
-            <p role="note">
-              只限同一主機與同一原生檔案。請勿讓 Web 與原生 Pi
-              同時寫入。重用既有 TUI 前也要重新載入 session。
-            </p>
-            <span>
-              Outcome <b>{snapshot.lastOutcome || "—"}</b>
-            </span>
-          </details>
+            <details key={selected} className={styles.sessionInfo} open>
+              <summary>Session 資訊</summary>
+              <span>
+                cwd <b>{snapshot.cwd || "—"}</b>{" "}
+                {snapshot.cwd && (
+                  <button
+                    onClick={() => {
+                      const g = generation.current;
+                      const frozenText = snapshot.cwd!;
+                      void copyText(frozenText).then((copied) => {
+                        if (!copied && g === generation.current)
+                          setManualCopy(frozenText);
+                      });
+                    }}
+                  >
+                    複製 cwd
+                  </button>
+                )}
+              </span>
+              <span>
+                Session dir <b>{snapshot.sessionDir || "—"}</b>{" "}
+                {snapshot.sessionDir && (
+                  <button
+                    onClick={() => {
+                      const g = generation.current;
+                      const frozenText = snapshot.sessionDir!;
+                      void copyText(frozenText).then((copied) => {
+                        if (!copied && g === generation.current)
+                          setManualCopy(frozenText);
+                      });
+                    }}
+                  >
+                    複製 session dir
+                  </button>
+                )}
+              </span>
+              {snapshot.nativeCommand && (
+                <button
+                  onClick={() => {
+                    const g = generation.current;
+                    const frozenText = snapshot.nativeCommand!;
+                    void copyText(frozenText).then((copied) => {
+                      if (!copied && g === generation.current)
+                        setManualCopy(frozenText);
+                    });
+                  }}
+                >
+                  複製原生 Pi 命令
+                </button>
+              )}
+              <p role="note">
+                只限同一主機與同一原生檔案。請勿讓 Web 與原生 Pi
+                同時寫入。重用既有 TUI 前也要重新載入 session。
+              </p>
+              <span>
+                Outcome <b>{snapshot.lastOutcome || "—"}</b>
+              </span>
+            </details>
+          </section>
         )}
         {snapshot && (snapshot.lastError || notices.length > 0) && (
           <section className={styles.sessionNotices} aria-label="Session 提示">
@@ -1533,28 +1567,19 @@ function App() {
         )}
         {snapshot && (
           <section className={styles.controls}>
-            <div className={styles.actions}>
-              <button
-                disabled={
-                  locked ||
-                  running ||
-                  snapshot.runtimeState !== "idle" ||
-                  snapshot.queue.length > 0
-                }
-                onClick={() => void submit("compact")}
-              >
-                Compact
-              </button>
-              {running && (
-                <button
-                  className={styles.stop}
-                  disabled={locked}
-                  onClick={() => void submit("stop")}
-                >
-                  清佇列並停止；不回滾檔案/commit
-                </button>
-              )}
-            </div>
+            {running && (
+              <div className={styles.actions}>
+                {running && (
+                  <button
+                    className={styles.stop}
+                    disabled={locked}
+                    onClick={() => void submit("stop")}
+                  >
+                    清佇列並停止；不回滾檔案/commit
+                  </button>
+                )}
+              </div>
+            )}
             <div className={styles.draft}>
               <textarea
                 aria-label="訊息草稿"
@@ -1580,51 +1605,40 @@ function App() {
                 }}
                 placeholder="輸入訊息；Ctrl/Cmd + Enter 僅送出 Prompt"
               />
-              <button
-                disabled={!canSend("prompt", drafts[selected] ?? "")}
-                onClick={() => void submit("prompt")}
-              >
-                Prompt
-              </button>
-              <button
-                disabled={!canSend("steer", drafts[selected] ?? "")}
-                onClick={() => void submit("steer")}
-              >
-                Steering
-              </button>
-              <button
-                disabled={!canSend("follow_up", drafts[selected] ?? "")}
-                onClick={() => void submit("follow_up")}
-              >
-                Follow-up
-              </button>
+              <div className={styles.draftActions}>
+                <button
+                  disabled={
+                    locked ||
+                    running ||
+                    snapshot.runtimeState !== "idle" ||
+                    snapshot.queue.length > 0
+                  }
+                  onClick={() => void submit("compact")}
+                >
+                  Compact
+                </button>
+                <button
+                  disabled={!canSend("prompt", drafts[selected] ?? "")}
+                  onClick={() => void submit("prompt")}
+                >
+                  Prompt
+                </button>
+                <button
+                  disabled={!canSend("steer", drafts[selected] ?? "")}
+                  onClick={() => void submit("steer")}
+                >
+                  Steering
+                </button>
+                <button
+                  disabled={!canSend("follow_up", drafts[selected] ?? "")}
+                  onClick={() => void submit("follow_up")}
+                >
+                  Follow-up
+                </button>
+              </div>
             </div>
           </section>
         )}
-        <section className={styles.receipts}>
-          <details>
-            <summary>最近操作收據（{receipts.length}）</summary>
-            {receipts.map((r) => (
-              <div key={r.operationId}>
-                <span>
-                  {r.sessionId.slice(0, 8)} · {r.kind} · {r.status}
-                  {r.status === "ACCEPTED"
-                    ? "（已接受，不代表執行完成）"
-                    : r.status === "HANDLED"
-                      ? "（已處理）"
-                      : r.status === "DISPATCHED"
-                        ? "（結果待確認）"
-                        : ""}{" "}
-                  · {r.operationId.slice(0, 8)}
-                </span>
-                <button onClick={() => void checkReceipt(r)}>查詢收據</button>
-                {receiptStatus[r.operationId] && (
-                  <small>{receiptStatus[r.operationId]}</small>
-                )}
-              </div>
-            ))}
-          </details>
-        </section>
       </main>
     </div>
   );
