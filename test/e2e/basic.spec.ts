@@ -114,4 +114,12 @@ test("login and create managed native session", async ({ page }) => {
         status: expect.stringMatching(/ACCEPTED|HANDLED/),
       }),
     );
+  await page.reload();
+  await expect(page.locator("header[data-session-id]")).toHaveAttribute(
+    "data-session-id",
+    created.id,
+  );
+  await expect(page.getByLabel("Owner token")).toHaveCount(0);
+  await expect(page.getByText("done", { exact: true })).toHaveCount(1);
+  expect(operationIds).toHaveLength(1);
 });

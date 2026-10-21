@@ -89,6 +89,15 @@ async function installFixture(page: Page) {
   ]);
   const queues = new Map<string, unknown[]>();
   const addedFiles = new Set<string>();
+  let nativeResponseCandidates: typeof nativeCandidates = nativeCandidates;
+  let nextNativeGate:
+    | {
+        started: () => void;
+        startedPromise: Promise<void>;
+        released: Promise<void>;
+        release: () => void;
+      }
+    | undefined;
   const operationPosts: Array<{ id: string; body: Record<string, unknown> }> =
     [];
   let abortPrompt = false;
@@ -143,14 +152,22 @@ async function installFixture(page: Page) {
     }
     return route.continue();
   });
-  await page.route("**/api/v1/projects/*/native-sessions", (route) =>
-    route.fulfill({
+  await page.route("**/api/v1/projects/*/native-sessions", async (route) => {
+    const gate = nextNativeGate;
+    if (gate) {
+      nextNativeGate = undefined;
+      gate.started();
+      await gate.released;
+    }
+    return route.fulfill({
       contentType: "application/json",
       body: JSON.stringify(
-        nativeCandidates.filter((candidate) => !addedFiles.has(candidate.file)),
+        nativeResponseCandidates.filter(
+          (candidate) => !addedFiles.has(candidate.file),
+        ),
       ),
-    }),
-  );
+    });
+  });
   await page.route("**/api/v1/sessions/*/snapshot", (route) => {
     const id = new URL(route.request().url()).pathname.split("/")[4]!;
     const selected = sessions.find((row) => row.id === id);
@@ -249,6 +266,22 @@ async function installFixture(page: Page) {
     setSessions(value: typeof sessions) {
       sessions = value;
     },
+    setNativeCandidates(value: typeof nativeCandidates) {
+      nativeResponseCandidates = value;
+    },
+    delayNextNativeResponse() {
+      let start!: () => void;
+      let release!: () => void;
+      const startedPromise = new Promise<void>((resolve) => (start = resolve));
+      const released = new Promise<void>((resolve) => (release = resolve));
+      nextNativeGate = {
+        started: start,
+        startedPromise,
+        released,
+        release,
+      };
+      return { started: startedPromise, release };
+    },
   };
 }
 
@@ -282,6 +315,78 @@ async function selectSession(page: Page, id: string) {
     })
     .click();
 }
+
+test("native candidate selection survives same-project refreshes and clears when stale or switching projects", async ({
+  page,
+}) => {
+  const fixture = await installFixture(page);
+  await login(page);
+  await openSidebarIfMobile(page);
+  const project = page.getByLabel(/Project/);
+  const select = page.getByLabel("加入既有 Pi session");
+  await expect(
+    select.locator('option[value="/fixture/new.jsonl"]'),
+  ).toBeAttached();
+  await select.selectOption("/fixture/new.jsonl");
+  await expect(select).toHaveValue("/fixture/new.jsonl");
+  await expect(
+    page.getByRole("button", { name: "加入選取的 session" }),
+  ).toBeEnabled();
+
+  fixture.setNativeCandidates([
+    ...[
+      { file: "/fixture/old.jsonl", id: "candidate-old", fileUpdatedAt: 1000 },
+      { file: "/fixture/new.jsonl", id: "candidate-new", fileUpdatedAt: 3000 },
+      { file: "/fixture/tie-b.jsonl", id: "tie-b", fileUpdatedAt: 2000 },
+      { file: "/fixture/tie-a.jsonl", id: "tie-a", fileUpdatedAt: 2000 },
+      { file: "/fixture/unknown.jsonl", id: "candidate-unknown" },
+      {
+        file: "/fixture/unsafe.jsonl",
+        id: "unsafe",
+        error: "unsafe path",
+        fileUpdatedAt: 4000,
+      },
+    ],
+    { file: "/fixture/refreshed.jsonl", id: "refreshed-candidate" },
+  ]);
+  const sameProjectGate = fixture.delayNextNativeResponse();
+  await page.getByRole("button", { name: "重新整理 Session 清單" }).click();
+  await sameProjectGate.started;
+  await expect(select).toHaveValue("/fixture/new.jsonl");
+  await expect(
+    page.getByRole("button", { name: "加入選取的 session" }),
+  ).toBeEnabled();
+  sameProjectGate.release();
+  await expect(
+    select.locator('option[value="/fixture/refreshed.jsonl"]'),
+  ).toBeAttached();
+  await expect(select).toHaveValue("/fixture/new.jsonl");
+
+  fixture.setNativeCandidates([
+    { file: "/fixture/old.jsonl", id: "candidate-old", fileUpdatedAt: 1000 },
+  ]);
+  await page.getByRole("button", { name: "重新整理 Session 清單" }).click();
+  await expect(select).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "加入選取的 session" }),
+  ).toBeDisabled();
+
+  fixture.setNativeCandidates([
+    { file: "/fixture/new.jsonl", id: "candidate-new", fileUpdatedAt: 3000 },
+  ]);
+  await page.getByRole("button", { name: "重新整理 Session 清單" }).click();
+  await expect(
+    select.locator('option[value="/fixture/new.jsonl"]'),
+  ).toBeAttached();
+  await select.selectOption("/fixture/new.jsonl");
+  await project.selectOption("second");
+  await expect(select).toHaveValue("");
+  await project.selectOption("demo");
+  await expect(select).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "加入選取的 session" }),
+  ).toBeDisabled();
+});
 
 test("managed and native lists sort by file time, filter projects, refresh, and add candidates safely", async ({
   page,
@@ -522,6 +627,12 @@ test("composer alignment, compact eligibility, and UNKNOWN operation never auto-
     expect(desktopLayout.compactTop).toBeLessThan(desktopLayout.promptTop);
   expect(desktopLayout.textareaHeight).toBeGreaterThanOrEqual(100);
   await draft.fill("ready after compact");
+  const beforeCancel = fixture.operationPosts.length;
+  page.once("dialog", (dialog) => void dialog.dismiss());
+  await compact.click();
+  expect(fixture.operationPosts).toHaveLength(beforeCancel);
+  expect(await draft.inputValue()).toBe("ready after compact");
+  page.once("dialog", (dialog) => void dialog.accept());
   await compact.click();
   await expect
     .poll(() => fixture.operationPosts.at(-1)?.body.kind)

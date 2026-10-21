@@ -24,6 +24,24 @@ export function canSubmitMessage(input: {
   );
 }
 
+export function canCompact(input: {
+  runtimeState: RuntimeState | undefined;
+  queueLength: number;
+  connected: boolean;
+  online: boolean;
+  busy: boolean;
+  hasSnapshot: boolean;
+}): boolean {
+  return (
+    input.runtimeState === "idle" &&
+    input.queueLength === 0 &&
+    input.connected &&
+    input.online &&
+    !input.busy &&
+    input.hasSnapshot
+  );
+}
+
 export type MessageKind = Extract<
   OperationKind,
   "prompt" | "steer" | "follow_up"

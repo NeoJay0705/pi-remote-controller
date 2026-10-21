@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canSubmitMessage } from "../../src/web/session-ui.js";
+import { canCompact, canSubmitMessage } from "../../src/web/session-ui.js";
 
 const base = {
   draft: " message ",
@@ -32,6 +32,29 @@ describe("message operation eligibility", () => {
             (runtimeState === "idle" || runtimeState === "released")) ||
             (kind !== "prompt" && runtimeState === "running"),
         );
+  });
+
+  it("checks compact eligibility across offline, disconnected, busy, queue, and runtime states", () => {
+    const valid = {
+      runtimeState: "idle" as const,
+      queueLength: 0,
+      connected: true,
+      online: true,
+      busy: false,
+      hasSnapshot: true,
+    };
+    expect(canCompact(valid)).toBe(true);
+    for (const blocked of [
+      { online: false },
+      { connected: false },
+      { busy: true },
+      { queueLength: 1 },
+      { runtimeState: "released" as const },
+      { runtimeState: "running" as const },
+      { runtimeState: "blocked" as const },
+      { hasSnapshot: false },
+    ])
+      expect(canCompact({ ...valid, ...blocked })).toBe(false);
   });
 
   it("rejects missing snapshots, blank drafts, offline, disconnected, and busy", () => {

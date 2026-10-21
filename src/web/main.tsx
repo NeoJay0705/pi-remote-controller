@@ -21,6 +21,7 @@ import {
   type Session,
 } from "./api.js";
 import { Conversation } from "./Conversation.js";
+import { createChatScrollController } from "./chat-scroll.js";
 import {
   emptyLiveTools,
   reconcileLiveTools,
@@ -31,7 +32,17 @@ import { reconstructStreamEvent, resetStream } from "./streaming.js";
 import { DialogPanel } from "./DialogPanel.js";
 import { SessionProfile } from "./SessionProfile.js";
 import { copyText, createOperationId } from "./browser-support.js";
-import { canSubmitMessage, type MessageKind } from "./session-ui.js";
+import {
+  canCompact,
+  canSubmitMessage,
+  type MessageKind,
+} from "./session-ui.js";
+import {
+  clearSessionView,
+  readSessionView,
+  resolveSessionView,
+  writeSessionView,
+} from "./session-view.js";
 import { sessionNameLabel } from "./session-names.js";
 import {
   formatFileUpdatedAt,
@@ -65,6 +76,10 @@ type SavedReceipt = {
 };
 function App() {
   const [authenticated, setAuthenticated] = useState(false),
+    [authStatus, setAuthStatus] = useState<
+      "checking" | "ready" | "probe-error"
+    >("checking"),
+    [loginPending, setLoginPending] = useState(false),
     [token, setToken] = useState(""),
     [globalError, setGlobalError] = useState(""),
     [sessionErrors, setSessionErrors] = useState<Record<string, string[]>>({}),
@@ -167,13 +182,39 @@ function App() {
     retryTimer = useRef<number | undefined>(undefined),
     nativeAbort = useRef<AbortController | undefined>(undefined),
     nativeGeneration = useRef(0),
+    lastNativeProject = useRef(""),
     connectRef = useRef<
       ((id: string, g: number, attempt?: number) => void) | undefined
     >(undefined),
     streamState = useRef(resetStream()),
     previousLeaf = useRef<string | undefined>(undefined),
     refreshRevision = useRef(0),
-    listRequestSerial = useRef(0);
+    listRequestSerial = useRef(0),
+    bootstrapSerial = useRef(0),
+    scrollGeneration = useRef(0),
+    sessionsRef = useRef(sessions),
+    selectSessionRef = useRef<
+      (id: string, projectId?: string) => Promise<void>
+    >(async () => undefined),
+    restoreViewRef = useRef<
+      (
+        lists: { projects: Project[]; sessions: Session[] },
+        serial: number,
+      ) => Promise<void>
+    >(async () => undefined);
+  const scrollController = useRef<
+    ReturnType<typeof createChatScrollController> | undefined
+  >(undefined);
+  scrollController.current ??= createChatScrollController({
+    getContainer: () => chatRef.current,
+    getGeneration: () => scrollGeneration.current,
+    getPinned: () => pinned.current,
+    setPinned: (value) => {
+      pinned.current = value;
+      setIsPinned(value);
+    },
+  });
+  sessionsRef.current = sessions;
   const refreshLists = useCallback(async () => {
     const requestGeneration = generation.current;
     const requestSerial = ++listRequestSerial.current;
@@ -186,7 +227,7 @@ function App() {
       requestGeneration !== generation.current ||
       requestSerial !== listRequestSerial.current
     )
-      return;
+      return undefined;
     setProjects(p);
     setProfiles(f);
     setSessions((old) =>
@@ -206,18 +247,33 @@ function App() {
     });
     setProject((v) => v || p[0]?.id || "");
     setProfile((v) => v || f[0]?.id || "");
+    return { projects: p, profiles: f, sessions: s };
   }, []);
   const login = async () => {
+    if (loginPending) return;
+    const serial = ++bootstrapSerial.current;
+    setLoginPending(true);
     try {
       await api.login(token);
+      if (serial !== bootstrapSerial.current) return;
       setGlobalError("");
       setSessionErrors({});
       setNameInfos({});
       setToken("");
+      generation.current++;
       setAuthenticated(true);
-      await refreshLists();
+      const lists = await refreshLists();
+      if (serial === bootstrapSerial.current && lists) {
+        setAuthStatus("ready");
+        await restoreView(lists, serial);
+      }
     } catch (e) {
-      setGlobalError((e as Error).message);
+      if (serial === bootstrapSerial.current) {
+        setAuthStatus("ready");
+        setGlobalError((e as Error).message);
+      }
+    } finally {
+      if (serial === bootstrapSerial.current) setLoginPending(false);
     }
   };
   useEffect(() => {
@@ -230,27 +286,44 @@ function App() {
   useEffect(() => {
     if (!isMobile && mobileOpen) setMobileOpen(false);
   }, [isMobile, mobileOpen]);
-  useEffect(() => {
-    api.me(false).then(
-      async () => {
-        setAuthenticated(true);
-        try {
-          await refreshLists();
-        } catch (e) {
-          setGlobalError((e as Error).message);
-        }
-      },
-      () => undefined,
-    );
+  const checkLogin = useCallback(async () => {
+    const serial = ++bootstrapSerial.current;
+    setAuthStatus("checking");
+    try {
+      await api.me(false);
+      if (serial !== bootstrapSerial.current) return;
+      generation.current++;
+      setAuthenticated(true);
+      const lists = await refreshLists();
+      if (serial !== bootstrapSerial.current || !lists) return;
+      setGlobalError("");
+      setAuthStatus("ready");
+      await restoreViewRef.current(lists, serial);
+    } catch (error) {
+      if (serial !== bootstrapSerial.current) return;
+      if ((error as { status?: number }).status === 401) {
+        setAuthenticated(false);
+        setAuthStatus("ready");
+      } else {
+        setAuthStatus("probe-error");
+        setGlobalError(`無法確認登入狀態：${(error as Error).message}`);
+      }
+    }
   }, [refreshLists]);
+  useEffect(() => {
+    void checkLogin();
+  }, [checkLogin]);
   useEffect(() => {
     if (!authenticated || !project) return;
     const controller = new AbortController();
     nativeAbort.current?.abort();
     nativeAbort.current = controller;
     const requestGeneration = ++nativeGeneration.current;
-    setNativeFile("");
-    setNativeFiles([]);
+    if (lastNativeProject.current !== project) {
+      lastNativeProject.current = project;
+      setNativeFile("");
+      setNativeFiles([]);
+    }
     api
       .native(project, controller.signal)
       .then((files) => {
@@ -260,8 +333,17 @@ function App() {
               .filter((session) => session.projectId === project)
               .map((session) => session.nativeId),
           );
-          setNativeFiles(
-            files.filter((file) => !file.id || !managed.has(file.id)),
+          const available = files.filter(
+            (file) => !file.id || !managed.has(file.id),
+          );
+          setNativeFiles(available);
+          setNativeFile((current) =>
+            current &&
+            available.some(
+              (file) => file.file === current && file.id && !file.error,
+            )
+              ? current
+              : "",
           );
         }
       })
@@ -273,7 +355,7 @@ function App() {
           setGlobalError((e as Error).message);
       });
   }, [authenticated, project, sessions]);
-  const selectSession = useCallback(async (id: string) => {
+  const selectSession = useCallback(async (id: string, projectId?: string) => {
     const g = ++generation.current;
     setInformationOpen(false);
     pinned.current = true;
@@ -285,6 +367,20 @@ function App() {
     abort.current = new AbortController();
     eventCount.current = 0;
     setSelected(id);
+    const selectedSession = sessionsRef.current.find(
+      (session) => session.id === id,
+    );
+    const verifiedProjectId = projectId ?? selectedSession?.projectId;
+    if (verifiedProjectId) {
+      setProject(verifiedProjectId);
+      writeSessionView({
+        version: 1,
+        projectId: verifiedProjectId,
+        sessionId: id,
+      });
+    }
+    scrollController.current?.cancel();
+    scrollGeneration.current++;
     setSessionLoadFailed(false);
     setManualCopy(undefined);
     setSnapshot(undefined);
@@ -436,6 +532,30 @@ function App() {
       }
     }
   }, []);
+  selectSessionRef.current = selectSession;
+  const restoreView = useCallback(
+    async (
+      lists: { projects: Project[]; sessions: Session[] },
+      serial: number,
+    ) => {
+      const target = resolveSessionView(
+        readSessionView(),
+        lists.projects,
+        lists.sessions,
+        lists.projects[0]?.id ?? "",
+      );
+      if (serial !== bootstrapSerial.current || !target.projectId) return;
+      setProject(target.projectId);
+      if (target.sessionId)
+        await selectSessionRef.current(target.sessionId, target.projectId);
+      else writeSessionView({ version: 1, projectId: target.projectId });
+    },
+    [],
+  );
+  restoreViewRef.current = restoreView;
+  const alignLatest = useCallback(() => {
+    scrollController.current?.alignLatest();
+  }, []);
   useLayoutEffect(() => {
     const container = chatRef.current;
     if (!container) return;
@@ -455,11 +575,11 @@ function App() {
       lastSessionForScroll.current = selected;
       pinned.current = true;
       setIsPinned(true);
-      container.scrollTop = container.scrollHeight;
+      alignLatest();
     } else if (pinned.current) {
-      container.scrollTop = container.scrollHeight;
+      alignLatest();
     }
-  }, [selected, snapshot, entries, partial, liveTools]);
+  }, [selected, snapshot, entries, partial, liveTools, isPinned, alignLatest]);
   useLayoutEffect(() => {
     if (previousMobileOpen.current && !mobileOpen && isMobile)
       menuRef.current?.focus();
@@ -471,12 +591,12 @@ function App() {
     const content = chatContentRef.current;
     if (!container || !content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (pinned.current) container.scrollTop = container.scrollHeight;
+      if (pinned.current) alignLatest();
     });
     observer.observe(container);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [selected, snapshot?.id]);
+  }, [selected, snapshot?.id, alignLatest]);
   useEffect(() => {
     const oldLeaf = previousLeaf.current;
     setLiveTools((state) => reconcileLiveTools(state, entries, oldLeaf));
@@ -615,7 +735,11 @@ function App() {
   }, [receipts]);
   useEffect(() => {
     const expired = () => {
+      bootstrapSerial.current++;
       generation.current++;
+      listRequestSerial.current++;
+      scrollGeneration.current++;
+      scrollController.current?.cancel();
       abort.current?.abort();
       nativeAbort.current?.abort();
       source.current?.close();
@@ -624,7 +748,16 @@ function App() {
       setConnected(false);
       setLiveTools(emptyLiveTools());
       previousLeaf.current = undefined;
+      pendingAnchor.current = undefined;
+      setSelected("");
+      setSnapshot(undefined);
+      setEntries([]);
+      setPartial("");
+      setSessionLoadFailed(false);
       setAuthenticated(false);
+      setAuthStatus("ready");
+      setLoginPending(false);
+      setBusy(false);
       setManualCopy(undefined);
       setInformationOpen(false);
       setGlobalError("登入已逾期，請重新登入。");
@@ -641,6 +774,8 @@ function App() {
       source.current?.close();
       window.clearTimeout(timer.current);
       window.clearTimeout(retryTimer.current);
+      scrollController.current?.cancel();
+      scrollGeneration.current++;
       nativeAbort.current?.abort();
     },
     [],
@@ -653,6 +788,7 @@ function App() {
       before = nextBefore,
       currentAtRequest = entries;
     if (!id || !before) return;
+    scrollController.current?.cancel();
     try {
       const container = chatRef.current;
       const h = await api.history(id, before);
@@ -750,7 +886,7 @@ function App() {
       );
       if (!importExisting) setNewSessionName("");
       await refreshLists();
-      await selectSession(s.id);
+      await selectSession(s.id, s.projectId);
     } catch (e) {
       setGlobalError(
         `建立失敗：${(e as Error).message}。請重新整理 Session 清單確認結果；不會自動重送。`,
@@ -862,6 +998,18 @@ function App() {
       requestGeneration = generation.current,
       frozen = text ?? drafts[sessionId] ?? "";
     if (
+      kind === "compact" &&
+      !canCompact({
+        runtimeState: snapshot?.runtimeState,
+        queueLength: snapshot?.queue.length ?? 0,
+        connected,
+        online: navigator.onLine,
+        busy,
+        hasSnapshot: !!snapshot,
+      })
+    )
+      return;
+    if (
       !sessionId ||
       ((kind === "prompt" || kind === "steer" || kind === "follow_up") &&
         !canSend(kind, frozen)) ||
@@ -876,8 +1024,7 @@ function App() {
     if (kind === "prompt" || kind === "steer" || kind === "follow_up") {
       pinned.current = true;
       setIsPinned(true);
-      if (chatRef.current)
-        chatRef.current.scrollTop = chatRef.current.scrollHeight;
+      alignLatest();
     }
     setBusy(true);
     let operationId: string | undefined;
@@ -1005,6 +1152,15 @@ function App() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [snapshot, selected, busy, connected, mobileOpen, isMobile]);
+  if (authStatus === "checking")
+    return <main role="status">正在確認登入狀態…</main>;
+  if (authStatus === "probe-error")
+    return (
+      <main role="alert">
+        {globalError}
+        <button onClick={() => void checkLogin()}>重試登入檢查</button>
+      </main>
+    );
   if (!authenticated)
     return (
       <main className={styles.login}>
@@ -1024,7 +1180,7 @@ function App() {
             value={token}
             onChange={(e) => setToken(e.target.value)}
           />
-          <button>登入</button>
+          <button disabled={loginPending}>登入</button>
           {globalError && <p role="alert">{globalError}</p>}
         </form>
       </main>
@@ -1063,6 +1219,7 @@ function App() {
             value={project}
             onChange={(e) => {
               setProject(e.target.value);
+              writeSessionView({ version: 1, projectId: e.target.value });
               setNativeFile("");
             }}
           >
@@ -1148,7 +1305,7 @@ function App() {
               key={s.id}
               className={selected === s.id ? styles.selected : ""}
               onClick={() => {
-                void selectSession(s.id);
+                void selectSession(s.id, s.projectId);
                 setMobileOpen(false);
               }}
             >
@@ -1166,28 +1323,43 @@ function App() {
         <button
           className={styles.logout}
           onClick={() => {
-            void api.logout().finally(() => {
-              generation.current++;
-              listRequestSerial.current++;
-              abort.current?.abort();
-              nativeAbort.current?.abort();
-              source.current?.close();
-              window.clearTimeout(timer.current);
-              window.clearTimeout(retryTimer.current);
-              setConnected(false);
-              setLiveTools(emptyLiveTools());
-              previousLeaf.current = undefined;
-              setSnapshot(undefined);
-              setEntries([]);
-              streamState.current = resetStream();
-              setPartial("");
-              setAuthenticated(false);
-              setSessionErrors({});
-              setGlobalError("");
-              setManualCopy(undefined);
-              setInformationOpen(false);
-              setSessions([]);
-              setNameInfos({});
+            const logoutSerial = ++bootstrapSerial.current;
+            generation.current++;
+            listRequestSerial.current++;
+            scrollController.current?.cancel();
+            scrollGeneration.current++;
+            clearSessionView();
+            abort.current?.abort();
+            nativeAbort.current?.abort();
+            source.current?.close();
+            source.current = undefined;
+            window.clearTimeout(timer.current);
+            window.clearTimeout(retryTimer.current);
+            setConnected(false);
+            setLiveTools(emptyLiveTools());
+            previousLeaf.current = undefined;
+            setSelected("");
+            setSnapshot(undefined);
+            setEntries([]);
+            setPartial("");
+            setSessionLoadFailed(false);
+            setAuthenticated(false);
+            setAuthStatus("ready");
+            setLoginPending(false);
+            setSessionErrors({});
+            setGlobalError("");
+            setManualCopy(undefined);
+            setInformationOpen(false);
+            setSessions([]);
+            setNameInfos({});
+            setBusy(false);
+            streamState.current = resetStream();
+            pendingAnchor.current = undefined;
+            void api.logout().catch(() => {
+              if (logoutSerial === bootstrapSerial.current)
+                setGlobalError(
+                  "本頁已登出，但無法確認伺服器登入已撤銷；重新整理可能再次登入。",
+                );
             });
           }}
         >
@@ -1407,12 +1579,25 @@ function App() {
             className={styles.chat}
             onScroll={(event) => {
               const element = event.currentTarget;
-              pinned.current =
-                element.scrollHeight -
-                  element.scrollTop -
-                  element.clientHeight <=
-                48;
-              setIsPinned(pinned.current);
+              scrollController.current?.onScroll(element);
+            }}
+            onPointerDown={() => scrollController.current?.interrupt()}
+            onTouchStart={() => scrollController.current?.interrupt()}
+            onWheel={() => scrollController.current?.interrupt()}
+            onKeyDown={(event) => {
+              if (
+                !event.nativeEvent.isComposing &&
+                [
+                  "ArrowUp",
+                  "ArrowDown",
+                  "PageUp",
+                  "PageDown",
+                  "Home",
+                  "End",
+                  " ",
+                ].includes(event.key)
+              )
+                scrollController.current?.interrupt();
             }}
           >
             {!selected ? (
@@ -1538,12 +1723,7 @@ function App() {
           {selected && snapshot && !isPinned && (
             <button
               className={`${styles.older} ${styles.backToLatest}`}
-              onClick={() => {
-                pinned.current = true;
-                setIsPinned(true);
-                if (chatRef.current)
-                  chatRef.current.scrollTop = chatRef.current.scrollHeight;
-              }}
+              onClick={() => scrollController.current?.jumpToLatest()}
             >
               回到最新
             </button>
@@ -1608,12 +1788,50 @@ function App() {
               <div className={styles.draftActions}>
                 <button
                   disabled={
-                    locked ||
-                    running ||
-                    snapshot.runtimeState !== "idle" ||
-                    snapshot.queue.length > 0
+                    !canCompact({
+                      runtimeState: snapshot?.runtimeState,
+                      queueLength: snapshot?.queue.length ?? 0,
+                      connected,
+                      online: navigator.onLine,
+                      busy,
+                      hasSnapshot: !!snapshot,
+                    })
                   }
-                  onClick={() => void submit("compact")}
+                  onClick={() => {
+                    if (
+                      !canCompact({
+                        runtimeState: snapshot?.runtimeState,
+                        queueLength: snapshot?.queue.length ?? 0,
+                        connected,
+                        online: navigator.onLine,
+                        busy,
+                        hasSnapshot: !!snapshot,
+                      })
+                    )
+                      return;
+                    const id = selected,
+                      g = generation.current;
+                    if (
+                      !window.confirm(
+                        "確定要 Compact 目前 session 嗎？這會壓縮對話上下文，不會送出草稿。",
+                      )
+                    )
+                      return;
+                    if (
+                      id !== selected ||
+                      g !== generation.current ||
+                      !canCompact({
+                        runtimeState: snapshot?.runtimeState,
+                        queueLength: snapshot?.queue.length ?? 0,
+                        connected,
+                        online: navigator.onLine,
+                        busy,
+                        hasSnapshot: !!snapshot,
+                      })
+                    )
+                      return;
+                    void submit("compact");
+                  }}
                 >
                   Compact
                 </button>

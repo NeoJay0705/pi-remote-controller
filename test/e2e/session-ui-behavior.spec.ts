@@ -313,6 +313,7 @@ test("message operation browser matrix, connectivity and chat scroll behavior", 
   await expect.poll(() => fixture.operationBodies.at(-1)?.kind).toBe("prompt");
 
   await scroller.evaluate((el) => {
+    el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1 }));
     el.scrollTop = Math.floor(el.scrollHeight / 2);
     el.dispatchEvent(new Event("scroll"));
   });
@@ -430,6 +431,7 @@ test("message operation browser matrix, connectivity and chat scroll behavior", 
     )
     .toBeLessThanOrEqual(2);
   await scroller.evaluate((el) => {
+    el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
     el.scrollTop = 0;
     el.dispatchEvent(new Event("scroll"));
   });
@@ -524,6 +526,7 @@ test("message operation browser matrix, connectivity and chat scroll behavior", 
     .toBeLessThanOrEqual(2);
 
   await scroller.evaluate((el) => {
+    el.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -1 }));
     el.scrollTop = 0;
     el.dispatchEvent(new Event("scroll"));
   });

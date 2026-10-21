@@ -214,7 +214,14 @@ test("queue, stop, compact, release, and prompt preserve session state", async (
   expect(await draft.inputValue()).toBe("keep my draft");
   expect(operationRequests).toHaveLength(requestCountBeforeCopy);
 
+  const beforeCompact = operationRequests.length;
+  page.once("dialog", (dialog) => void dialog.dismiss());
   await page.getByRole("button", { name: "Compact" }).click();
+  await expect.poll(() => operationRequests.length).toBe(beforeCompact);
+  expect(await draft.inputValue()).toBe("keep my draft");
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Compact" }).click();
+  await expect.poll(() => operationRequests.length).toBe(beforeCompact + 1);
   await expect
     .poll(async () => (await getSnapshot()).runtimeState)
     .toBe("idle");

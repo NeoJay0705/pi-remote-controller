@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { expectPiSessionId } from "./ui-helpers.js";
+import { expectCurrentAppId, expectPiSessionId } from "./ui-helpers.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -38,9 +38,11 @@ test("discovers isolated projects and keeps sessions grouped", async ({
         new URL(item.url()).pathname === "/api/v1/sessions",
     );
     await createButton.click();
-    const { nativeId } = (await (await createResponse).json()) as {
+    const { id, nativeId } = (await (await createResponse).json()) as {
+      id: string;
       nativeId: string;
     };
+    await expectCurrentAppId(page, id);
     await expectPiSessionId(page, nativeId);
     expect(seenNativeIds.has(nativeId)).toBe(false);
     seenNativeIds.add(nativeId);
