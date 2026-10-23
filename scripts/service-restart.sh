@@ -29,6 +29,6 @@ run_stage() {
   fi
 }
 
-run_stage stop node "$instance/stop.mjs"
+run_stage stop node "$repo_root/scripts/service-stop.mjs"
 run_stage build npm run build
 run_stage start node "$instance/start.mjs"

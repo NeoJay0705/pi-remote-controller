@@ -1,6 +1,6 @@
 # Pi Remote Workspace
 
-Pi 原生 session 的同源遠端介面。Linux 主機需使用 Node.js 22.19 以上。專案目前只接受 Pi 1.3.0 套件 metadata。安全修補包含 `@fastify/static` 10.1.6 與 matched-route API 權限判斷。真 Pi/TUI/模型完整端到端尚未驗證。本文描述軟體功能與可攜操作方式，不代表任何服務目前正在運行。
+Pi 原生 session 的同源遠端介面。Linux 主機需使用 Node.js 22.19 以上。Controller 與受管理 TUI 暫不檢查 Pi 套件版本；workspace v1 的 Pi 1.3.0 僅保留為歷史契約基準，新版本相容性尚未驗證。詳見[版本 gate 移除需求](docs/pi-version-gate-removal-requirements.md)與[設計](docs/pi-version-gate-removal-design.md)。安全修補包含 `@fastify/static` 10.1.6 與 matched-route API 權限判斷。真 Pi/TUI/模型完整端到端尚未驗證。本文描述軟體功能與可攜操作方式，不代表任何服務目前正在運行。
 
 歷史測試結果只適用於當時執行的範圍。離線合成驗收曾執行 142 tests／23 files、16 個 desktop/mobile browser cases，以及 18 項 compiled-app smoke assertions；這些數字不表示所有情境通過，也不等於全面安全保證。安全部署與有限驗證歷史見[正式服務安全部署與登入 v1 驗證](docs/production-service-v1-verification.md)及[安全審查紀錄](docs/security-review.md)。真 Pi/TUI/模型、完整 thinking profile、file-hook 矩陣、實際權限與 atomic-replace 等情境尚未驗證。
 
@@ -21,7 +21,7 @@ npm ci --ignore-scripts
 npm run build
 ```
 
-準備 canonical 絕對路徑的設定檔。`PRW_CONFIG` 必須指向此設定檔。設定須提供 canonical 絕對路徑的 `piCli`、`dataDir`、project `cwd`／`sessionDir` 及 profiles。設定格式範例見 [`config/example.json`](config/example.json)。Owner 必須自行安全管理至少 32 字元的 `PRW_OWNER_TOKEN`。軟體不會自動建立或管理 token。新部署可由安全隨機生成器產生至少 32 字元的 token；不要把生產 token 硬碼在命令、設定或文件內。
+準備 canonical 絕對路徑的設定檔。`PRW_CONFIG` 必須指向此設定檔。`piCli` 可設為精確字串 `pi`，由服務啟動時的 PATH 順序選第一個可執行的一般檔案；也可保留 canonical 絕對檔案路徑。`pi:` extension 從該 CLI 所屬的 `@earendil-works/pi-coding-agent` 套件根目錄解析，並拒絕越界路徑。PATH 是 service manager／npm 啟動程序提供的環境；shell alias 與 function 不會生效。已載入設定不會因 PATH 變更而切換，重新啟動後才重新解析。套件版本不作啟動 gate，新版本相容性仍未驗證。設定格式範例見 [`config/example.json`](config/example.json)，完整規則見 [Pi install resolution 需求](docs/pi-install-resolution-requirements.md)與[設計](docs/pi-install-resolution-design.md)。`dataDir`、project `cwd`／`sessionDir` 仍須為 canonical 絕對路徑。Owner 必須自行安全管理至少 32 字元的 `PRW_OWNER_TOKEN`。軟體不會自動建立或管理 token。新部署可由安全隨機生成器產生至少 32 字元的 token；不要把生產 token 硬碼在命令、設定或文件內。
 
 使用支援的環境變數啟動。`read -s` 是 Bash 功能，可避免 token 值進入 shell history：
 
@@ -52,7 +52,7 @@ Owner 可從私有憑證檔讀取既有 token，例如 `cat /absolute/path/to/pr
 
 先確認介面存在，且設定的位址正由該介面持有。功能只綁定該單一 IP，不會自動探索或追蹤位址變更，也不會修改 VPN／防火牆或公開 Internet。Tailscale HTTP 不等於 HTTPS，也不構成瀏覽器 secure context。HTTP 無法使用 Secure cookie；瀏覽器可能限制 Web Crypto、剪貼簿等功能。介面提供安全 UUID fallback 與手動複製備援。VPN 不是應用程式認證；Owner token 與精確 Origin 驗證仍必要。
 
-Pi 子程序會繼承服務使用者的 Pi 個人環境。工作目錄與 Pi trust 不是 sandbox。Profile 是主機設定的選擇，不是任意 CLI 輸入。`user-development` 範例未設定 extension，也未做相容性實測。若 `+subagent,+codemode` 需要 extension，Owner 必須設定 canonical 絕對 extension 路徑及適當 policy。Controller 不會靜默替換 provider/model/thinking 或略過必要 extension。
+Pi 子程序會繼承服務使用者的 Pi 個人環境。工作目錄與 Pi trust 不是 sandbox。Profile 是主機設定的選擇，不是任意 CLI 輸入。`config/example.json` 的 `user-development` 範例已設定 `pi:examples/extensions/subagent/index.ts` extension；extension 可使用 canonical 絕對路徑或 `pi:<package-relative-path>`。缺少必要 extension 時不會 fallback。若 `+subagent,+codemode` 需要 extension，Owner 必須設定 extension 及適當 policy；policy 仍使用絕對路徑。相容性尚未實測。Controller 不會靜默替換 provider/model/thinking 或略過必要 extension。
 
 ## Project 與 sessionDir
 

@@ -13,7 +13,7 @@
 - 使用 TypeScript strict 與 Node.js 22.19+；目前基準為 Node.js 22.21.1。
 - Linux 為第一個支援平台。
 - 使用 React/Vite SPA、Fastify 同源 API 與正式靜態檔服務、CSS Modules、Vitest、Playwright。
-- Pi 以 1.3.0 stdio RPC 啟動。
+- 歷史契約基準為 Pi 1.3.0 stdio RPC；目前 Controller 與受管理 TUI 暫不檢查 Pi 套件版本。此變更不代表新版本已完成 RPC 或其他相容性驗證，詳見[版本 gate 移除需求](pi-version-gate-removal-requirements.md)與[設計](pi-version-gate-removal-design.md)。
 - 不採用 SSR，也不在服務內嵌 Pi SDK。
 - 若手刻 RPC adapter，原因是需要嚴格的傳輸邊界、backpressure 與可證明的 child close join。官方 `RpcClient.stop` 不可單獨當成完成交接的證據。
 - 服務是 Pi 原生 session 的遠端操作入口，不是新的 Agent 引擎。瀏覽器不直接連 Pi 的 stdin/stdout（R01）。
@@ -34,8 +34,7 @@
 - `PRW_CONFIG` 指向主機上的 JSON 設定檔。
 - `PRW_OWNER_TOKEN` 由環境提供，至少 32 字元；不得進 URL 或瀏覽器 bundle。
 - 設定包含 `port`、`dataDir`、`piCli`、`projects[{id,name,cwd,sessionDir}]` 及 `profiles[{id,name,provider?,model?,thinking?,extensions?,tools?,appendSystemPrompts?}]`。
-- 所有路徑都必須絕對、canonical，並由受授權的主機設定指定。網頁不得提供任意主機路徑或 CLI 參數。
-- 啟動時檢查 `piCli` 套件 metadata 必須是 1.3.0。不符即 fail closed。未來升版須先做相容性驗證。
+- 所有主機設定路徑都必須明確驗證；網頁不得提供任意主機路徑或 CLI 參數。`piCli` 可為精確字串 `pi`，按程序啟動時 PATH 選第一個可執行一般檔案，也可為既有 canonical 絕對檔案路徑。extension 可為絕對檔案路徑或 `pi:<package-relative-path>`，後者必須位於所選 CLI 的 `@earendil-works/pi-coding-agent` 套件根目錄內。解析結果在該次 `loadConfig` 固定；重啟才重新採用啟動 PATH。套件名稱只用於定位根目錄，不檢查版本。shell alias／function 不會解析；必須由 npm 或 service manager 提供 PATH。完整規則見[Pi install resolution 需求](pi-install-resolution-requirements.md)與[設計](pi-install-resolution-design.md)。目前不檢查套件版本；歷史 1.3.0 契約基準不構成對新版本的相容性聲明，RPC、模型、extensions 與 TUI 相容性仍須個別驗證。
 - 不得靜默 fuzzy fallback 模型。啟動後核對 `get_state` 的實際 provider、model、thinking；明確指定值不符即失敗。
 - Profile argv 以參數陣列表示，不拼接 shell 字串。必要工具、模型或 extension 缺少時明確失敗，不靜默改用其他設定（R15）。
 
@@ -248,19 +247,19 @@ A01–A14 必須以矩陣逐項標示 `planned`、`passed` 或 `unverified`。�
 
 ### 15.1 驗收對照
 
-| 需求／驗收       | 設計對應                                                     | 驗收狀態              |
-| ---------------- | ------------------------------------------------------------ | --------------------- |
-| R01–R02、A02     | Pi stdio RPC、原生 session 檔及明確導入／新建                | planned；執行時未驗證 |
-| R03–R05、A03–A05 | 凍結操作 session、狀態欄位、原生 prompt/steer/follow-up 語意 | planned；執行時未驗證 |
-| R06–R07、A06     | clear_queue 後 abort、保留清除項目、確認 idle                | planned；執行時未驗證 |
-| R08、R10、A07    | runtime 獨立於 SSE 與頁面，重連重新 snapshot/history         | planned；執行時未驗證 |
-| R09、A08         | 每 session 獨立 runtime；不做 worktree 全域排隊              | planned；執行時未驗證 |
-| R11–R12、A12     | operation ledger、收據、UNKNOWN、不自動重播                  | planned；執行時未驗證 |
-| R13–R14、A09–A11 | kernel WriterLease、受管理 TUI 交接、失敗保留 lease          | planned；執行時未驗證 |
-| R15、A13         | 主機 profile、版本檢查、實際 model/thinking 核對             | planned；執行時未驗證 |
-| R16、A14         | 原生 template、compact RPC、slash command 限制               | planned；執行時未驗證 |
-| R17、A01、A14    | 手機／桌面 SPA、安全 Markdown、同源 API                      | planned；執行時未驗證 |
-| R18              | API 與 shared contracts 分層；不開發 App                     | planned；執行時未驗證 |
+| 需求／驗收       | 設計對應                                                                       | 驗收狀態              |
+| ---------------- | ------------------------------------------------------------------------------ | --------------------- |
+| R01–R02、A02     | Pi stdio RPC、原生 session 檔及明確導入／新建                                  | planned；執行時未驗證 |
+| R03–R05、A03–A05 | 凍結操作 session、狀態欄位、原生 prompt/steer/follow-up 語意                   | planned；執行時未驗證 |
+| R06–R07、A06     | clear_queue 後 abort、保留清除項目、確認 idle                                  | planned；執行時未驗證 |
+| R08、R10、A07    | runtime 獨立於 SSE 與頁面，重連重新 snapshot/history                           | planned；執行時未驗證 |
+| R09、A08         | 每 session 獨立 runtime；不做 worktree 全域排隊                                | planned；執行時未驗證 |
+| R11–R12、A12     | operation ledger、收據、UNKNOWN、不自動重播                                    | planned；執行時未驗證 |
+| R13–R14、A09–A11 | kernel WriterLease、受管理 TUI 交接、失敗保留 lease                            | planned；執行時未驗證 |
+| R15、A13         | 主機 profile、歷史版本基準（目前不檢查 Pi 套件版本）、實際 model/thinking 核對 | planned；執行時未驗證 |
+| R16、A14         | 原生 template、compact RPC、slash command 限制                                 | planned；執行時未驗證 |
+| R17、A01、A14    | 手機／桌面 SPA、安全 Markdown、同源 API                                        | planned；執行時未驗證 |
+| R18              | API 與 shared contracts 分層；不開發 App                                       | planned；執行時未驗證 |
 
 ## 16. 故障安全條件與未驗證邊界
 

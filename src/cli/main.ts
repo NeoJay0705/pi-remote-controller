@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { loadConfig, verifyPiVersion } from "../server/config.js";
+import { loadConfig } from "../server/config.js";
 import { Ledger } from "../server/store.js";
 import { WriterLease } from "../server/lease.js";
 import { inspectNative } from "../server/native-reader.js";
@@ -8,7 +8,6 @@ import { safeErrorCode } from "../server/errors.js";
 
 async function tui(id: string): Promise<void> {
   const config = await loadConfig();
-  await verifyPiVersion(config.piCli);
   const ledger = await Ledger.open(config.dataDir, {
     readOnly: true,
     recover: false,

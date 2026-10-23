@@ -1,9 +1,14 @@
 import { realpath, readFile, stat } from "node:fs/promises";
 import { networkInterfaces } from "node:os";
-import { isAbsolute, dirname, join, relative, resolve } from "node:path";
+import { isAbsolute, dirname, relative, resolve } from "node:path";
 import type { Profile, Project, WorkspaceConfig } from "../shared/contracts.js";
 import { validateListenConfig } from "./network.js";
 import { refreshDiscoveredProjects } from "./project-discovery.js";
+import {
+  findPiPackageRoot,
+  resolvePiFromPath,
+  resolvePiPackageExtension,
+} from "./pi-install.js";
 
 function record(
   value: unknown,
@@ -148,7 +153,21 @@ export async function loadConfig(
       "sessionRoot",
     ]);
   const dataDir = await dataDirectory(parsed.dataDir);
-  const piCli = await canonical(parsed.piCli, "pi_cli");
+  let piCli: string;
+  try {
+    piCli =
+      parsed.piCli === "pi"
+        ? await resolvePiFromPath()
+        : await canonical(parsed.piCli, "pi_cli");
+  } catch {
+    throw new Error("invalid_pi_cli");
+  }
+  let packageRoot: Promise<string> | undefined;
+  const resolveExtension = async (value: string): Promise<string> => {
+    if (!value.startsWith("pi:")) return canonical(value, "extension_path");
+    packageRoot ??= findPiPackageRoot(piCli);
+    return resolvePiPackageExtension(await packageRoot, value);
+  };
   const projectDiscovery =
     parsed.projectDiscovery === undefined
       ? undefined
@@ -220,7 +239,7 @@ export async function loadConfig(
         )
           throw new Error("invalid_profile_setting");
         profile.extensions = await Promise.all(
-          item.extensions.map((v: unknown) => canonical(v, "extension_path")),
+          item.extensions.map((v: unknown) => resolveExtension(v as string)),
         );
       }
       if (item.appendSystemPrompts !== undefined) {
@@ -281,33 +300,4 @@ async function canonicalNearestDirectory(
       existing = parent;
     }
   }
-}
-export async function verifyPiVersion(piCli: string): Promise<void> {
-  const executable = await realpath(piCli);
-  let dir = dirname(executable);
-  for (let i = 0; i < 8; i++) {
-    try {
-      const metadata: unknown = JSON.parse(
-        await readFile(join(dir, "package.json"), "utf8"),
-      );
-      if (
-        metadata &&
-        typeof metadata === "object" &&
-        "name" in metadata &&
-        (metadata as { name?: unknown }).name ===
-          "@earendil-works/pi-coding-agent"
-      ) {
-        if ((metadata as { version?: unknown }).version !== "1.3.0")
-          throw new Error("unsupported_pi_version");
-        return;
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message === "unsupported_pi_version")
-        throw error;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  throw new Error("pi_package_metadata_missing");
 }

@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createApp } from "./app.js";
-import { loadConfig, verifyPiVersion } from "./config.js";
+import { loadConfig } from "./config.js";
 import { WriterLease } from "./lease.js";
 import { Ledger } from "./store.js";
 import { WorkspaceRuntime } from "./runtime.js";
@@ -11,7 +11,6 @@ export async function startServer(): Promise<{
   close: () => Promise<void>;
 }> {
   const config = await loadConfig();
-  await verifyPiVersion(config.piCli);
   const token = process.env.PRW_OWNER_TOKEN;
   if (!token || token.length < 32) throw new Error("owner_token_invalid");
   await mkdir(config.dataDir, { recursive: true, mode: 0o700 });

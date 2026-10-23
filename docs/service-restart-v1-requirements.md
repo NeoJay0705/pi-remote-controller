@@ -1,12 +1,14 @@
 # Service Restart v1：直接入口重啟
 
+停止階段的 stale-PID 行為詳見[需求](service-stop-stale-pid-requirements.md)與[設計](service-stop-stale-pid-design.md)。
+
 狀態：已實作，隔離流程測試與專案檢查通過；正式重啟未執行。共同前綴：`service-restart-v1`。本版取代先前 release 管理腳本方案；見[設計](service-restart-v1-design.md)。
 
 ## 需求與使用情境
 
 本機由操作者授權重啟，接受建置期間停機及建置失敗時保持停止。目標只是把既有服務的停止、建置、啟動串成固定命令，不提供部署管理平台。
 
-- `npm run service:restart` 固定執行：既有 stop.mjs → repository 的 npm run build → 既有 start.mjs。前一步失敗就停止，不重試、不自動 rollback。
+- `npm run service:restart` 固定執行：tracked `scripts/service-stop.mjs` → repository 的 npm run build → 既有 start.mjs。只有記錄 PID 不存在且 TCP 4317 無 listener 才視為已停止；前一步失敗就停止，不重試、不自動 rollback。此 stop 決定取代沿用 instance/stop.mjs 的舊決定。
 - 啟動器直接匯入 repository 的 dist/server/main.js，保留既有設定、token、正常 close 與日誌機制。不再讀 active-release.json。
 - 只支援既有 `.test-artifacts/live-instance`。不提供 --instance、--restart-only、force 等選項。保留基本重複執行防護及失敗階段輸出。
 - 執行前由操作者確認沒有需要保留的進行中工作；重啟可能中斷工作。腳本不登入、不列 session、不查 DB、不做 browser／模型驗收。啟動結果沿用既有 start 檢查。
