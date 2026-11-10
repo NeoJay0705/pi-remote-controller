@@ -73,6 +73,9 @@ const KNOWN_ERRORS = new Set([
   "project_discovery_unavailable",
   "project_discovery_too_large",
   "project_discovery_collision",
+  "invalid_directory_path",
+  "directory_create_failed",
+  "directory_exists",
   "rpc_protocol_error",
   "rpc_invalid_utf8",
   "rpc_frame_too_large",
@@ -148,6 +151,7 @@ export function statusForError(
     return 503;
   if (
     code === "native_session_exists" ||
+    code === "directory_exists" ||
     code === "operation_conflict" ||
     code === "profile_conflict" ||
     code === "session_profile_blocked" ||

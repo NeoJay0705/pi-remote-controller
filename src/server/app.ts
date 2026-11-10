@@ -12,6 +12,11 @@ import { normalizeSessionName } from "../shared/session-names.js";
 import { Ledger } from "./store.js";
 import { WorkspaceRuntime } from "./runtime.js";
 import { refreshDiscoveredProjects } from "./project-discovery.js";
+import {
+  createDirectory,
+  listDirectories,
+  selectProject,
+} from "./project-picker.js";
 import { createAuth } from "./auth.js";
 import { safeErrorCode, statusForError } from "./errors.js";
 import { createNative, listNative } from "./native-sessions.js";
@@ -150,6 +155,50 @@ export function createApp(
   );
   app.get("/api/v1/auth/me", async () => ({ authenticated: true }));
   app.get("/health", async () => ({ ok: true }));
+  app.get<{ Querystring: { path?: string | string[] } }>(
+    "/api/v1/directories",
+    async (req, reply) => {
+      try {
+        const path = req.query.path ?? "";
+        if (typeof path !== "string") throw new Error("invalid_directory_path");
+        return await listDirectories(config, path);
+      } catch (e) {
+        error(reply, e);
+      }
+    },
+  );
+  app.post("/api/v1/directories", async (req, reply) => {
+    if (
+      !object(req.body, ["parent", "name"]) ||
+      typeof req.body.parent !== "string" ||
+      typeof req.body.name !== "string"
+    ) {
+      reply.code(400).send({
+        error: { code: "invalid_schema", message: "Invalid request" },
+      });
+      return;
+    }
+    try {
+      reply
+        .code(201)
+        .send(await createDirectory(config, req.body.parent, req.body.name));
+    } catch (e) {
+      error(reply, e);
+    }
+  });
+  app.post("/api/v1/projects", async (req, reply) => {
+    if (!object(req.body, ["path"]) || typeof req.body.path !== "string") {
+      reply.code(400).send({
+        error: { code: "invalid_schema", message: "Invalid request" },
+      });
+      return;
+    }
+    try {
+      return await selectProject(config, req.body.path);
+    } catch (e) {
+      error(reply, e);
+    }
+  });
   app.get("/api/v1/projects", async (_req, reply) => {
     try {
       const projects = await refreshDiscoveredProjects(config);

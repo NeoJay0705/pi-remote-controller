@@ -21,6 +21,7 @@ import {
   type Session,
 } from "./api.js";
 import { Conversation } from "./Conversation.js";
+import { DirectoryPicker } from "./DirectoryPicker.js";
 import { createChatScrollController } from "./chat-scroll.js";
 import {
   emptyLiveTools,
@@ -1230,6 +1231,14 @@ function App() {
             ))}
           </select>
         </label>
+        <DirectoryPicker
+          onSelected={async (picked) => {
+            await refreshLists();
+            setProject(picked.id);
+            writeSessionView({ version: 1, projectId: picked.id });
+            setNativeFile("");
+          }}
+        />
         <label>
           <span id="profile-label">Profile</span>
           <small>供新建／加入使用；不會變更目前已選取的 Session。</small>

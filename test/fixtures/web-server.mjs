@@ -25,6 +25,30 @@ await mkdir(discoveryRoot, { recursive: true });
 await mkdir(privateSessionRoot, { recursive: true });
 for (const name of ["repoA", "repoB", "repoC"])
   await mkdir(join(discoveryRoot, name));
+const nestedProject = join(discoveryRoot, "container", "nested-a");
+await mkdir(nestedProject, { recursive: true });
+const nestedSessionDir = join(
+  privateSessionRoot,
+  `--${nestedProject.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`,
+);
+await mkdir(nestedSessionDir, { recursive: true });
+const nestedNativeId = "9f3a70b5-19de-47e5-ae03-8d36af01a491";
+await writeFile(
+  join(nestedSessionDir, `${nestedNativeId}.jsonl`),
+  `${JSON.stringify({
+    type: "session",
+    version: 3,
+    id: nestedNativeId,
+    timestamp: "2025-01-01T00:00:00.000Z",
+    cwd: nestedProject,
+  })}\n${JSON.stringify({
+    type: "message",
+    id: "nested-fixture-entry",
+    parentId: null,
+    timestamp: "2025-01-01T00:00:01.000Z",
+    message: { role: "user", content: "Nested session fixture" },
+  })}\n`,
+);
 await mkdir(join(root, "home"), { recursive: true });
 await mkdir(gateDir, { recursive: true });
 process.env.FAKE_PI_GATE_DIR = gateDir;

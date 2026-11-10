@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { realpath, readdir } from "node:fs/promises";
-import { basename, join, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import type { Project, WorkspaceConfig } from "../shared/contracts.js";
 
 const INITIAL_STATIC = new WeakMap<WorkspaceConfig, Set<string>>();
@@ -10,6 +10,37 @@ export function piSessionDirectory(sessionRoot: string, cwd: string): string {
     .replace(/^[/\\]/, "")
     .replace(/[/\\:]/g, "-")}--`;
   return join(sessionRoot, encoded);
+}
+export function isStaticProject(
+  config: WorkspaceConfig,
+  project: Project,
+): boolean {
+  return INITIAL_STATIC.get(config)?.has(project.id) === true;
+}
+export function projectForCwd(config: WorkspaceConfig, cwd: string): Project {
+  const discovery = config.projectDiscovery;
+  if (!discovery) throw new Error("project_discovery_unavailable");
+  if (!INITIAL_STATIC.has(config))
+    INITIAL_STATIC.set(config, new Set(config.projects.map((p) => p.id)));
+  const staticIds = INITIAL_STATIC.get(config)!;
+  const staticProject = config.projects.find(
+    (project) => staticIds.has(project.id) && project.cwd === cwd,
+  );
+  if (staticProject) return staticProject;
+  const id = `repo-${createHash("sha256").update(cwd).digest("hex").slice(0, 24)}`;
+  const collision = config.projects.find(
+    (project) => project.id === id && project.cwd !== cwd,
+  );
+  if (collision) throw new Error("project_discovery_collision");
+  const known = config.projects.find((project) => project.id === id);
+  return (
+    known ?? {
+      id,
+      name: relative(discovery.root, cwd).split(sep).join("/"),
+      cwd,
+      sessionDir: piSessionDirectory(discovery.sessionRoot, cwd),
+    }
+  );
 }
 export async function refreshDiscoveredProjects(
   config: WorkspaceConfig,
@@ -34,7 +65,6 @@ export async function refreshDiscoveredProjects(
   }
   if (entries.length > MAX_ENTRIES)
     throw new Error("project_discovery_too_large");
-  const staticIds = INITIAL_STATIC.get(config)!;
   const found: Project[] = [];
   for (const entry of entries) {
     if (
@@ -52,29 +82,27 @@ export async function refreshDiscoveredProjects(
     }
     if (actual !== cwd || relative(root, actual).startsWith(`..${sep}`))
       continue;
-    const staticProject = config.projects.find(
-      (p) => staticIds.has(p.id) && p.cwd === cwd,
-    );
-    const id = `repo-${createHash("sha256").update(cwd).digest("hex").slice(0, 24)}`;
-    if (staticProject) {
-      found.push(staticProject);
+    found.push(projectForCwd(config, cwd));
+  }
+  const { resolveUnderRoot, readPickedPaths } =
+    await import("./project-picker.js");
+  for (const path of await readPickedPaths(config)) {
+    let cwd: string;
+    try {
+      cwd = await resolveUnderRoot(root, path);
+      if (cwd === root) continue;
+    } catch {
+      // Keep stale selections in persistence; inaccessible paths are ignored.
       continue;
     }
-    const collision = config.projects.find((p) => p.id === id && p.cwd !== cwd);
-    if (collision) throw new Error("project_discovery_collision");
-    const known = config.projects.find((p) => p.id === id);
-    const project = known ?? {
-      id,
-      name: basename(cwd),
-      cwd,
-      sessionDir: piSessionDirectory(discovery.sessionRoot, cwd),
-    };
-    found.push(project);
+    const project = projectForCwd(config, cwd);
+    if (!found.some((known) => known.id === project.id)) found.push(project);
   }
   for (const project of found) {
     if (!config.projects.some((known) => known.id === project.id))
       config.projects.push(project);
   }
+  const staticIds = INITIAL_STATIC.get(config)!;
   const statics = config.projects.filter((p) => staticIds.has(p.id));
   const unique = (projects: Project[]) =>
     projects.filter(

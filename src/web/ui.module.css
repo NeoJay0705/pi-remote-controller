@@ -35,6 +35,31 @@
   color: #49443b;
   font-size: 12px;
 }
+.directoryPicker {
+  display: grid;
+  gap: 8px;
+}
+.directoryPanel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.directoryBreadcrumb {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.directoryEntries {
+  display: grid;
+  gap: 5px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.directoryEntries button {
+  text-align: left;
+  overflow-wrap: anywhere;
+}
 .sidebar select,
 .sidebar input,
 .draft select {

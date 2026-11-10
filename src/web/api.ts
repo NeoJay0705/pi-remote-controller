@@ -88,6 +88,10 @@ async function request<T>(
         "Profile 切換結果尚未確認。請由管理者核對操作結果；重試不會解除阻擋。",
       rpc_profile_mismatch: "Pi 實際設定與目標 Profile 不符，切換未確認。",
       sync_unconfirmed: "Pi 狀態尚未確認。請由管理者核對後再操作。",
+      invalid_directory_path: "目錄路徑無效或無法存取。",
+      directory_exists: "此目錄已存在。",
+      directory_create_failed: "無法建立目錄。",
+      project_discovery_collision: "此目錄與既有 Project 衝突。",
     };
     const message =
       response.status === 401
@@ -122,6 +126,22 @@ export const api = {
       body: "{}",
     }),
   projects: () => request<Project[]>("/api/v1/projects"),
+  directories: (path: string) =>
+    request<{ path: string; entries: string[] }>(
+      `/api/v1/directories?${new URLSearchParams({ path }).toString()}`,
+    ),
+  createDirectory: (parent: string, name: string) =>
+    request<{ path: string }>("/api/v1/directories", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parent, name }),
+    }),
+  selectProject: (path: string) =>
+    request<Pick<Project, "id" | "name">>("/api/v1/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    }),
   profiles: () => request<Profile[]>("/api/v1/profiles"),
   sessions: () => request<Session[]>("/api/v1/sessions"),
   native: (project: string, signal?: AbortSignal) =>
