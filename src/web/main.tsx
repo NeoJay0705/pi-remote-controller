@@ -32,6 +32,13 @@ import {
 import { reconstructStreamEvent, resetStream } from "./streaming.js";
 import { DialogPanel } from "./DialogPanel.js";
 import { SessionProfile } from "./SessionProfile.js";
+import { RpcManagement } from "./RpcManagement.js";
+import {
+  boundedReceiptHistory,
+  mergeReceipt,
+  RPC_RECEIPTS_KEY,
+  type ManagementReceipt,
+} from "./rpc-management.js";
 import { copyText, createOperationId } from "./browser-support.js";
 import {
   canCompact,
@@ -74,6 +81,8 @@ type SavedReceipt = {
   sessionId: string;
   kind: OperationKind;
   status: string;
+  result?: unknown;
+  errorCode?: string;
 };
 function App() {
   const [authenticated, setAuthenticated] = useState(false),
@@ -107,10 +116,7 @@ function App() {
     [busy, setBusy] = useState(false),
     [receipts, setReceipts] = useState<SavedReceipt[]>(() => {
       try {
-        return JSON.parse(sessionStorage.getItem("prw-receipts") || "[]").slice(
-          0,
-          30,
-        );
+        return JSON.parse(sessionStorage.getItem(RPC_RECEIPTS_KEY) || "[]");
       } catch {
         return [];
       }
@@ -118,6 +124,7 @@ function App() {
     [liveTools, setLiveTools] = useState<LiveToolsState>(emptyLiveTools),
     [notices, setNotices] = useState<string[]>([]),
     [mobileOpen, setMobileOpen] = useState(false),
+    [managementOpen, setManagementOpen] = useState(false),
     [informationOpen, setInformationOpen] = useState(false),
     [manualCopy, setManualCopy] = useState<string>(),
     [isPinned, setIsPinned] = useState(true),
@@ -726,14 +733,35 @@ function App() {
   }
   useEffect(() => {
     try {
+      const stored = JSON.parse(
+        sessionStorage.getItem(RPC_RECEIPTS_KEY) || "[]",
+      ) as SavedReceipt[];
+      const merged = [...receipts];
+      for (const item of stored) {
+        if (!merged.some((current) => current.operationId === item.operationId))
+          merged.push(item);
+      }
       sessionStorage.setItem(
-        "prw-receipts",
-        JSON.stringify(receipts.slice(0, 30)),
+        RPC_RECEIPTS_KEY,
+        JSON.stringify(boundedReceiptHistory(merged)),
       );
     } catch {
       /* Storage may be disabled or full. */
     }
   }, [receipts]);
+  const saveManagementReceipt = (receipt: ManagementReceipt): boolean => {
+    try {
+      const stored = JSON.parse(
+        sessionStorage.getItem(RPC_RECEIPTS_KEY) || "[]",
+      ) as SavedReceipt[];
+      const updated = mergeReceipt(stored, receipt as SavedReceipt);
+      sessionStorage.setItem(RPC_RECEIPTS_KEY, JSON.stringify(updated));
+      setReceipts((old) => mergeReceipt(old, receipt as SavedReceipt));
+      return true;
+    } catch {
+      return false;
+    }
+  };
   useEffect(() => {
     const expired = () => {
       bootstrapSerial.current++;
@@ -756,6 +784,7 @@ function App() {
       setPartial("");
       setSessionLoadFailed(false);
       setAuthenticated(false);
+      setManagementOpen(false);
       setAuthStatus("ready");
       setLoginPending(false);
       setBusy(false);
@@ -926,15 +955,12 @@ function App() {
     try {
       operationId = createOperationId();
       setReceipts((old) =>
-        [
-          {
-            operationId: operationId!,
-            sessionId: frozen.sessionId,
-            kind: "change_profile" as const,
-            status: "DISPATCHED",
-          },
-          ...old,
-        ].slice(0, 30),
+        mergeReceipt(old, {
+          operationId: operationId!,
+          sessionId: frozen.sessionId,
+          kind: "change_profile",
+          status: "DISPATCHED",
+        }),
       );
       const receipt = await api.operation(frozen.sessionId, {
         operationId,
@@ -943,13 +969,16 @@ function App() {
         expectedProfileId: frozen.expectedProfileId,
         expectedProfileRevision: frozen.expectedProfileRevision,
       });
-      setReceipts((old) =>
-        old.map((item) =>
-          item.operationId === operationId
-            ? { ...item, status: receipt.status }
-            : item,
-        ),
-      );
+      setReceipts((old) => {
+        const current = old.find((item) => item.operationId === operationId);
+        return current
+          ? mergeReceipt(old, {
+              ...current,
+              status: receipt.status,
+              result: receipt.result,
+            })
+          : old;
+      });
       if (frozen.generation === generation.current) {
         await sync(frozen.sessionId, frozen.generation);
         await refreshLists();
@@ -1032,7 +1061,7 @@ function App() {
     try {
       operationId = createOperationId();
       const item = { operationId, sessionId, kind, status: "DISPATCHED" };
-      const list = [item, ...receipts].slice(0, 30);
+      const list = mergeReceipt(receipts, item);
       setReceipts(list);
       const receipt = await api.operation(sessionId, {
         operationId,
@@ -1042,11 +1071,16 @@ function App() {
           : {}),
         ...(ui ?? {}),
       });
-      setReceipts((old) =>
-        old.map((r) =>
-          r.operationId === operationId ? { ...r, status: receipt.status } : r,
-        ),
-      );
+      setReceipts((old) => {
+        const current = old.find((r) => r.operationId === operationId);
+        return current
+          ? mergeReceipt(old, {
+              ...current,
+              status: receipt.status,
+              result: receipt.result,
+            })
+          : old;
+      });
       if (
         ["ACCEPTED", "HANDLED"].includes(receipt.status) &&
         kind !== "stop" &&
@@ -1087,9 +1121,10 @@ function App() {
           ? `${(e as Error).message} 操作結果尚未確認；不會自動重送，請勿直接重送。`
           : (e as Error).message,
       );
-      setReceipts((old) =>
-        old.map((r) => (r.operationId === operationId ? { ...r, status } : r)),
-      );
+      setReceipts((old) => {
+        const current = old.find((r) => r.operationId === operationId);
+        return current ? mergeReceipt(old, { ...current, status }) : old;
+      });
       if (status === "登入逾期") {
         setAuthenticated(false);
         setGlobalError("登入已逾期，請重新登入。");
@@ -1117,11 +1152,16 @@ function App() {
   async function checkReceipt(r: SavedReceipt) {
     try {
       const v = await api.receipt(r.operationId);
-      setReceipts((old) =>
-        old.map((x) =>
-          x.operationId === r.operationId ? { ...x, status: v.status } : x,
-        ),
-      );
+      setReceipts((old) => {
+        const current = old.find((x) => x.operationId === r.operationId);
+        return current
+          ? mergeReceipt(old, {
+              ...current,
+              status: v.status,
+              result: v.result,
+            })
+          : old;
+      });
     } catch {
       // Receipt lookup remains internal; never retry the operation.
     }
@@ -1133,6 +1173,7 @@ function App() {
   }, []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (managementOpen) return;
       if (e.key === "Escape" && e.isComposing) return;
       if (e.key === "Escape" && mobileOpen && isMobile) {
         e.preventDefault();
@@ -1152,7 +1193,15 @@ function App() {
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [snapshot, selected, busy, connected, mobileOpen, isMobile]);
+  }, [
+    snapshot,
+    selected,
+    busy,
+    connected,
+    mobileOpen,
+    isMobile,
+    managementOpen,
+  ]);
   if (authStatus === "checking")
     return <main role="status">正在確認登入狀態…</main>;
   if (authStatus === "probe-error")
@@ -1195,6 +1244,7 @@ function App() {
   return (
     <div className={styles.app}>
       <aside
+        hidden={managementOpen}
         id="session-sidebar"
         className={`${styles.sidebar} ${mobileOpen ? styles.open : ""}`}
       >
@@ -1305,6 +1355,15 @@ function App() {
         >
           加入選取的 session
         </button>
+        <button
+          type="button"
+          onClick={() => {
+            setManagementOpen(true);
+            setMobileOpen(false);
+          }}
+        >
+          RPC 管理
+        </button>
         <div className={styles.sessionLabel}>受管 Sessions</div>
         <nav>
           {sortManagedSessions(
@@ -1375,7 +1434,7 @@ function App() {
           登出
         </button>
       </aside>
-      {mobileOpen && (
+      {mobileOpen && !managementOpen && (
         <button
           aria-label="關閉側欄遮罩"
           className={styles.overlay}
@@ -1385,14 +1444,16 @@ function App() {
         />
       )}
       <main
-        className={styles.main}
+        className={`${styles.main} ${managementOpen ? "rpc-management-mode" : ""}`}
         inert={mobileOpen && isMobile ? true : undefined}
       >
         <header
+          hidden={managementOpen}
           className={styles.header}
           data-session-id={snapshot?.id || selected || ""}
         >
           <button
+            hidden={managementOpen}
             ref={menuRef}
             aria-expanded={mobileOpen}
             aria-controls="session-sidebar"
@@ -1402,33 +1463,46 @@ function App() {
             ☰
           </button>
           <strong className={styles.headerName}>
-            {snapshot
-              ? sessionNameLabel(nameInfos[selected])
-              : "選擇或建立 Session"}
+            {managementOpen
+              ? "RPC 管理"
+              : snapshot
+                ? sessionNameLabel(nameInfos[selected])
+                : "選擇或建立 Session"}
           </strong>
-          <span
-            className={styles.runtime}
-            aria-label={`Runtime：${snapshot?.runtimeState || "—"}`}
-          >
-            <span className={styles.runtimePrefix}>Runtime：</span>
-            {snapshot?.runtimeState || "—"}
-          </span>
-          <span
-            className={`${styles.connection} ${connected ? styles.online : ""}`}
-          >
-            {connected ? "● 已連線" : "○ 離線"}
-          </span>
-          <button
-            className={styles.infoToggle}
-            aria-label="Session 設定與資訊"
-            aria-expanded={informationOpen}
-            aria-controls="session-information"
-            disabled={!snapshot || snapshot.id !== selected}
-            onClick={() => setInformationOpen((open) => !open)}
-          >
-            <span className={styles.infoLong}>設定與資訊</span>
-            <span className={styles.infoShort}>資訊</span>
-          </button>
+          {!managementOpen && (
+            <span
+              className={styles.runtime}
+              aria-label={`Runtime：${snapshot?.runtimeState || "—"}`}
+            >
+              <span className={styles.runtimePrefix}>Runtime：</span>
+              {snapshot?.runtimeState || "—"}
+            </span>
+          )}
+          {!managementOpen && (
+            <span
+              className={`${styles.connection} ${connected ? styles.online : ""}`}
+            >
+              {connected ? "● 已連線" : "○ 離線"}
+            </span>
+          )}
+          {!managementOpen && (
+            <button type="button" onClick={() => setManagementOpen(true)}>
+              RPC 管理
+            </button>
+          )}
+          {!managementOpen && (
+            <button
+              className={styles.infoToggle}
+              aria-label="Session 設定與資訊"
+              aria-expanded={informationOpen}
+              aria-controls="session-information"
+              disabled={!snapshot || snapshot.id !== selected}
+              onClick={() => setInformationOpen((open) => !open)}
+            >
+              <span className={styles.infoLong}>設定與資訊</span>
+              <span className={styles.infoShort}>資訊</span>
+            </button>
+          )}
         </header>
         {manualCopy !== undefined && (
           <section aria-label="手動複製">
@@ -1865,6 +1939,13 @@ function App() {
               </div>
             </div>
           </section>
+        )}
+        {managementOpen && (
+          <RpcManagement
+            receipts={receipts as ManagementReceipt[]}
+            saveReceipt={saveManagementReceipt}
+            onReturn={() => setManagementOpen(false)}
+          />
         )}
       </main>
     </div>

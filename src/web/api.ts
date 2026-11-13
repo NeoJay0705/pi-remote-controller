@@ -3,6 +3,7 @@ import type {
   Profile,
   Project,
   Receipt,
+  RuntimeSession,
   Snapshot,
   SessionNameInfo,
 } from "../shared/contracts.js";
@@ -144,6 +145,8 @@ export const api = {
     }),
   profiles: () => request<Profile[]>("/api/v1/profiles"),
   sessions: () => request<Session[]>("/api/v1/sessions"),
+  runtimes: (signal?: AbortSignal) =>
+    request<RuntimeSession[]>("/api/v1/runtimes", signal ? { signal } : {}),
   native: (project: string, signal?: AbortSignal) =>
     request<NativeCandidate[]>(
       `/api/v1/projects/${encodeURIComponent(project)}/native-sessions`,

@@ -108,6 +108,28 @@ export interface Snapshot {
   sessionDir?: string;
   nativeCommand?: string;
 }
+export type ReleaseBlockedReason =
+  | "not_running"
+  | "owner_mismatch"
+  | "runtime_not_idle"
+  | "operation_in_flight"
+  | "runtime_transition"
+  | "queue_not_empty"
+  | "dialogs_pending"
+  | "profile_switch_unresolved"
+  | "cwd_unavailable"
+  | "rpc_state_unavailable"
+  | "rpc_state_mismatch"
+  | "rpc_busy"
+  | "runtime_changed";
+export interface RuntimeSession {
+  id: string;
+  nameInfo: SessionNameInfo;
+  cwd?: string;
+  runtimeState: RuntimeState;
+  releaseEligible: boolean;
+  releaseBlockedReason?: ReleaseBlockedReason;
+}
 export interface ApiError {
   error: { code: string; message: string };
 }

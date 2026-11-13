@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import type {
   WorkspaceConfig,
   OperationInput,
+  RuntimeSession,
   SessionNameInfo,
 } from "../shared/contracts.js";
 import { normalizeSessionName } from "../shared/session-names.js";
@@ -310,6 +311,43 @@ export function createApp(
       error(reply, e);
     }
   });
+  app.get("/api/v1/runtimes", async (_req, reply) => {
+    try {
+      const budget: NameReadBudget = {
+        bytes: 0,
+        maxBytes: 8 * 1024 * 1024,
+        deadline: Date.now() + 1000,
+        now: Date.now,
+        exhausted: false,
+      };
+      const runtimes: RuntimeSession[] = [];
+      for (const record of ledger.sessions()) {
+        const initialSnapshot = runtime.snapshot(record);
+        if (initialSnapshot.runtimeState === "released") continue;
+        const project = config.projects.find((p) => p.id === record.projectId);
+        const nameInfo: SessionNameInfo = project
+          ? await readNativeName(record.nativeFile, project, {
+              expectedNativeId: record.nativeId,
+              sharedBudget: budget,
+            })
+          : { status: "error", code: "invalid_session_config" };
+        const snapshot = runtime.snapshot(record);
+        if (snapshot.runtimeState === "released") continue;
+        const reason = runtime.releaseEligibility(record, tails.has(record.id));
+        runtimes.push({
+          id: record.id,
+          nameInfo,
+          ...(project ? { cwd: project.cwd } : {}),
+          runtimeState: snapshot.runtimeState,
+          releaseEligible: reason === undefined,
+          ...(reason ? { releaseBlockedReason: reason } : {}),
+        });
+      }
+      return runtimes;
+    } catch (e) {
+      error(reply, e);
+    }
+  });
   app.get("/api/v1/sessions", async (_req, reply) => {
     try {
       const budget: NameReadBudget = {
@@ -580,6 +618,38 @@ export function createApp(
           return;
         }
         const input = body as unknown as OperationInput;
+        if (blockedSessions.has(record.id)) throw new Error("session_blocked");
+        if (input.kind === "release" && tails.has(record.id)) {
+          try {
+            const admission = ledger.begin(
+              record.id,
+              input.kind,
+              input.operationId,
+              input,
+            );
+            if (!admission.fresh) {
+              const receipt =
+                ledger.operation(input.operationId) ?? admission.receipt;
+              reply
+                .code(receipt.status === "UNKNOWN" ? 409 : 202)
+                .send(receipt);
+              return;
+            }
+            const result = {
+              status: "rejected",
+              reason: "operation_in_flight",
+            };
+            ledger.finish(input.operationId, "REJECTED", result);
+            reply.code(409).send(ledger.operation(input.operationId));
+            return;
+          } catch (e) {
+            if (safeErrorCode(e) === "storage_error") {
+              blockedSessions.add(record.id);
+              await runtime.block(record.id, "storage_error");
+            }
+            throw e;
+          }
+        }
         const admissionOwner = record.desiredOwner;
         const admissionBusy =
           tails.has(record.id) ||

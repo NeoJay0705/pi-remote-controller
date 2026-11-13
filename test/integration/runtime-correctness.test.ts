@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { testRoot } from "../helpers/environment.js";
 import { WriterLease } from "../../src/server/lease.js";
 import { createNative } from "../../src/server/native-sessions.js";
@@ -35,6 +35,79 @@ async function make(model = "fake-model") {
   return { dir, config, ledger, runtime, record };
 }
 describe("runtime ownership and stop ordering", () => {
+  it.each([
+    [
+      "running",
+      (live: { snapshot: { runtimeState: string } }) => {
+        live.snapshot.runtimeState = "running";
+      },
+    ],
+    [
+      "queue",
+      (live: { queue: unknown[] }) => {
+        live.queue.push({});
+      },
+    ],
+    [
+      "dialog",
+      (live: { pending: Map<string, unknown> }) => {
+        live.pending.set("dialog", {});
+      },
+    ],
+    [
+      "transition",
+      (live: { reloading: boolean }) => {
+        live.reloading = true;
+      },
+    ],
+  ])(
+    "does not close or release the writer lease for unsafe %s state",
+    async (_state, inject) => {
+      const s = await make();
+      await s.runtime.operation(s.record, {
+        operationId: "init",
+        kind: "prompt",
+        text: "idle",
+      });
+      const internals = s.runtime as unknown as {
+        live: Map<
+          string,
+          {
+            snapshot: { runtimeState: string };
+            queue: unknown[];
+            pending: Map<string, unknown>;
+            reloading: boolean;
+            rpc: { close: () => Promise<void> };
+          }
+        >;
+      };
+      const live = internals.live.get(s.record.id)!;
+      inject(live as never);
+      const close = vi.spyOn(live.rpc, "close");
+      try {
+        await expect(
+          s.runtime.operation(s.record, {
+            operationId: "unsafe-release",
+            kind: "release",
+          }),
+        ).rejects.toMatchObject({ statusCode: 409 });
+        expect(close).not.toHaveBeenCalled();
+        expect(internals.live.has(s.record.id)).toBe(true);
+        await expect(
+          WriterLease.acquire(s.record.nativeFile + ".prw.lock"),
+        ).rejects.toBeInstanceOf(Error);
+      } finally {
+        close.mockRestore();
+        live.snapshot.runtimeState = "idle";
+        live.queue.length = 0;
+        live.pending.clear();
+        live.reloading = false;
+        await s.runtime.shutdown();
+        s.ledger.close();
+        await rm(s.dir, { recursive: true, force: true });
+      }
+    },
+  );
   it("keeps a TUI-owned snapshot read-only until an explicit prompt", async () => {
     const s = await make();
     s.ledger.setOwner(s.record.id, "tui");

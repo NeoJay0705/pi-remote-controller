@@ -1,0 +1,108 @@
+.rpc-management-mode > :not(header):not(.rpc-management) {
+  display: none !important;
+}
+.rpc-management {
+  width: min(100%, 1100px);
+  margin: 0 auto;
+  padding: 24px clamp(16px, 4vw, 40px) 48px;
+  overflow-y: auto;
+}
+.rpc-management-heading,
+.rpc-management-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.rpc-management-heading h1 {
+  margin-bottom: 4px;
+}
+.rpc-management-heading p {
+  margin-top: 0;
+}
+.rpc-management-toolbar {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.rpc-runtime-list,
+.rpc-receipts ul {
+  list-style: none;
+  padding: 0;
+}
+.rpc-runtime-card {
+  margin: 12px 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+.rpc-runtime-card h2 {
+  margin: 0 0 12px;
+  font-size: 1.15rem;
+}
+.rpc-runtime-card dl {
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(0, 1fr);
+  gap: 7px 14px;
+  margin: 0 0 14px;
+}
+.rpc-runtime-card dt {
+  font-weight: 650;
+}
+.rpc-runtime-card dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.rpc-runtime-card button,
+.rpc-management button,
+.rpc-receipts button {
+  min-height: 42px;
+  padding: 8px 14px;
+}
+.rpc-management-error {
+  color: #8c1717;
+}
+.rpc-management-notice {
+  padding: 12px;
+  border-left: 4px solid #4d5c49;
+  background: #fff;
+}
+.rpc-receipts {
+  margin-top: 28px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.rpc-receipts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .rpc-management {
+    padding: 16px 12px 32px;
+  }
+  .rpc-management-heading {
+    align-items: flex-start;
+  }
+  .rpc-runtime-card {
+    padding: 14px;
+  }
+  .rpc-runtime-card dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 3px;
+  }
+  .rpc-runtime-card dd {
+    margin: 0 0 9px;
+  }
+  .rpc-receipts li {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

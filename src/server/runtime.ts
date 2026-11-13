@@ -5,12 +5,17 @@ import type {
   Snapshot,
   QueueItem,
   PendingDialog,
+  ReleaseBlockedReason,
 } from "../shared/contracts.js";
 import type { Ledger, SessionRecord } from "./store.js";
 import type { WorkspaceConfig } from "../shared/contracts.js";
 import { WriterLease } from "./lease.js";
 import { PiRpc, RpcError } from "./rpc.js";
 import { inspectNative, readNativeTail } from "./native-reader.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 function snapshotMetadata(
   project: WorkspaceConfig["projects"][number] | undefined,
@@ -645,6 +650,33 @@ export class WorkspaceRuntime extends EventEmitter {
       throw e;
     }
   }
+  releaseEligibility(
+    record: SessionRecord,
+    operationInFlight = false,
+  ): ReleaseBlockedReason | undefined {
+    const live = this.live.get(record.id);
+    if (this.ledger.unresolvedProfileSwitch(record.id))
+      return "profile_switch_unresolved";
+    if (operationInFlight) return "operation_in_flight";
+    if (!this.config.projects.some((p) => p.id === record.projectId))
+      return "cwd_unavailable";
+    if (record.desiredOwner !== "web") return "owner_mismatch";
+    if (!live) return "not_running";
+    if (
+      this.switching.has(record.id) ||
+      live.reloading ||
+      live.staged ||
+      live.snapshot.runtimeState === "reconfiguring" ||
+      live.snapshot.runtimeState === "starting" ||
+      live.snapshot.runtimeState === "stopping" ||
+      live.snapshot.runtimeState === "releasing"
+    )
+      return "runtime_transition";
+    if (live.snapshot.runtimeState !== "idle") return "runtime_not_idle";
+    if (live.queue.length) return "queue_not_empty";
+    if (live.pending.size) return "dialogs_pending";
+    return undefined;
+  }
   async operation(
     record: SessionRecord,
     input: OperationInput,
@@ -671,17 +703,56 @@ export class WorkspaceRuntime extends EventEmitter {
       return { status: "claimed" };
     }
     if (input.kind === "release") {
-      if (!live)
-        throw Object.assign(new Error("not_running"), { statusCode: 409 });
-      if (live.snapshot.runtimeState !== "idle" || live.queue.length)
-        throw Object.assign(new Error("session_busy"), { statusCode: 409 });
-      live.snapshot.runtimeState = "releasing";
-      for (const timer of live.dialogTimers.values()) clearTimeout(timer);
-      live.dialogTimers.clear();
-      live.pending.clear();
+      const reject = (reason: string): never => {
+        throw Object.assign(new Error(reason), { statusCode: 409 });
+      };
+      const blocked = this.releaseEligibility(record);
+      if (blocked) return reject(blocked);
+      const releaseLive = live;
+      if (!releaseLive) return reject("not_running");
+      const sameLive = releaseLive;
+      let stateResult: Record<string, unknown>;
+      try {
+        stateResult = await releaseLive.rpc.command("get_state");
+      } catch (e) {
+        if (isRecord(e) && e.statusCode === 409) throw e;
+        return reject("rpc_state_unavailable");
+      }
+      const state = stateResult.data;
+      if (!isRecord(state)) return reject("rpc_state_unavailable");
+      if (
+        state.sessionId !== record.nativeId ||
+        state.sessionFile !== record.nativeFile
+      )
+        return reject("rpc_state_mismatch");
+      const pendingMessageCount = state.pendingMessageCount;
+      if (
+        typeof state.isStreaming !== "boolean" ||
+        typeof state.isCompacting !== "boolean" ||
+        typeof pendingMessageCount !== "number" ||
+        !Number.isInteger(pendingMessageCount) ||
+        pendingMessageCount < 0
+      )
+        return reject("rpc_state_unavailable");
+      if (
+        state.isStreaming !== false ||
+        state.isCompacting !== false ||
+        pendingMessageCount !== 0
+      )
+        return reject("rpc_busy");
+      if (
+        this.live.get(record.id) !== sameLive ||
+        this.releaseEligibility(record)
+      )
+        return reject("runtime_changed");
+      releaseLive.snapshot.runtimeState = "releasing";
+      for (const timer of releaseLive.dialogTimers.values())
+        clearTimeout(timer);
+      releaseLive.dialogTimers.clear();
+      releaseLive.pending.clear();
       this.emitSnapshot(record.id);
       try {
-        await live.rpc.close();
+        await releaseLive.rpc.close();
       } catch (e) {
         await this.block(record.id, "cleanup_incomplete");
         throw e;
@@ -693,19 +764,19 @@ export class WorkspaceRuntime extends EventEmitter {
         throw e;
       }
       record.desiredOwner = "tui";
-      live.snapshot.desiredOwner = "tui";
+      releaseLive.snapshot.desiredOwner = "tui";
       try {
-        await live.lease.close();
+        await releaseLive.lease.close();
       } catch (e) {
         await this.block(record.id, "cleanup_incomplete");
         throw e;
       }
-      live.snapshot.runtimeState = "released";
+      releaseLive.snapshot.runtimeState = "released";
       this.emitSnapshot(record.id);
       this.live.delete(record.id);
       this.emit(`session:${record.id}`, {
         type: "snapshot",
-        data: { ...live.snapshot },
+        data: { ...releaseLive.snapshot },
       });
       return { status: "released" };
     }

@@ -50,6 +50,17 @@ const KNOWN_ERRORS = new Set([
   "already_claimed",
   "not_running",
   "session_busy",
+  "runtime_not_idle",
+  "operation_in_flight",
+  "runtime_transition",
+  "queue_not_empty",
+  "dialogs_pending",
+  "profile_switch_unresolved",
+  "cwd_unavailable",
+  "rpc_state_unavailable",
+  "rpc_state_mismatch",
+  "rpc_busy",
+  "runtime_changed",
   "session_idle",
   "text_required",
   "session_blocked",
@@ -144,6 +155,7 @@ export function statusForError(
   if (code === "rpc_command_rejected" || code === "compact_rejected")
     return 409;
   if (code === "rpc_compact_unconfirmed") return 503;
+  if (code === "rpc_state_unavailable") return 503;
   if (
     code.startsWith("rpc_") &&
     (error as { uncertain?: boolean } | null)?.uncertain
@@ -162,6 +174,16 @@ export function statusForError(
     code === "session_blocked" ||
     code === "dialog_invalid" ||
     code === "owner_mismatch" ||
+    code === "runtime_not_idle" ||
+    code === "operation_in_flight" ||
+    code === "runtime_transition" ||
+    code === "queue_not_empty" ||
+    code === "dialogs_pending" ||
+    code === "profile_switch_unresolved" ||
+    code === "cwd_unavailable" ||
+    code === "rpc_state_mismatch" ||
+    code === "rpc_busy" ||
+    code === "runtime_changed" ||
     code === "tui_owner_required" ||
     code === "tui_not_owner"
   )

@@ -78,9 +78,17 @@ Controller 不掃描個人 HOME，也不搬移既有 history。`GET /api/v1/proj
 
 若切換結果無法確認，Session 會維持 UNKNOWN／blocked，不會自動回退，也不應盲目重試。請由管理者依離線恢復規則確認 writer 已退出、原生檔案身分及操作結果，再決定後續處理；不要刪除 lock 或執行未核對的 SQL 解鎖命令。本功能尚不代表已部署，也未證明真 Pi 或 extensions 相容性。詳見[需求](docs/session-profile-switch-v1-requirements.md)與[設計](docs/session-profile-switch-v1-design.md)。
 
+## RPC 管理
+
+頁首或側欄的「RPC 管理」可開啟獨立管理畫面，跨 Project 列出 Runtime 非 `released` 的受管 Sessions，顯示名稱、Controller Session ID、工作目錄與 Runtime 狀態。清單每 5 秒更新，也可手動重新整理；離線、更新失敗或超過 15 秒未更新時，Release 會停用。返回對話保留原選取的 Session 與草稿。
+
+`idle` 代表 RPC 仍啟動並持有 writer lease，不是正在啟動，也不是已關閉。僅閒置、無佇列及無待回覆對話時可逐筆確認 `Release RPC`；後端會再次核對 Pi 狀態，忙碌或已有其他操作進行時拒絕釋放。成功後關閉目標 RPC、釋放 lease，沿用既有 Owner 交還 `tui` 的語意，不刪除 Session 或歷史，也不停止其他 Runtime。之後從 Web 送出 prompt 可重新取得寫入權並啟動 RPC。Stop、切換 Session 或關閉瀏覽器不等於 Release。
+
+釋放結果不明時只查操作收據，不會自動重送；請勿繞過停用保護。管理畫面不掃描或控制外部原生 Pi/TUI 程序，也不提供 force-close 或批次釋放。離線合成驗收與限制見 [RPC management v1 驗收](docs/rpc-management-v1-verification.md)；這不代表已部署或完成真模型驗證。
+
 ## Session 與操作限制
 
-舊版 Web／TUI 交接流程只保留為 legacy 相容流程，不是新版 UI 的標準操作。新版 UI 不提供 owner 交接按鈕。受管理 TUI 完全退出後，Web 可使用 Claim 載入最新 history；Idle RPC runtime 仍持有 session lease。永久 `.prw.lock` 檔不可刪除。Controller crash 時 Pi 可繼續持鎖；只有確認舊 writer 已消失後才可重試。未知操作絕不自動重播，只查 operation receipt。Controller crash 後原生 Pi queue 不能保證恢復。
+舊版完整 Web／TUI Claim 交接流程只保留為 legacy 相容流程；新版 UI 不提供 Claim 按鈕，僅在獨立 RPC 管理畫面提供安全 Release。受管理 TUI 完全退出後，legacy Claim 可載入最新 history；Idle RPC runtime 仍持有 session lease。永久 `.prw.lock` 檔不可刪除。Controller crash 時 Pi 可繼續持鎖；只有確認舊 writer 已消失後才可重試。未知操作絕不自動重播，只查 operation receipt。Controller crash 後原生 Pi queue 不能保證恢復。
 
 取消不會回滾已發生的檔案或 commit 副作用。未受管理的 `pi --session` 不受雙寫保護。獨立 extension 背景程序的取消不保證。
 
@@ -104,7 +112,15 @@ npm run test:e2e
 npm run check
 ```
 
-`npm test` 與 `npm run test:e2e` 會先在隔離環境建置所需的 `dist`，不要求既有 build。兩者會自動建立 `.test-artifacts/runs/` 下的隔離測試環境。測試程序使用專用的私有 HOME 與 XDG 目錄，不讀取 Owner 的 Pi 個人設定或憑證。E2E 測試需要 Playwright Chromium。若瀏覽器執行檔不在預設位置，可透過 `PRW_BROWSER_EXECUTABLE` 指定路徑。`.test-artifacts` 是 gitignore 忽略規則，不代表每個 clone 都有報告；其中若存放部署或資料，刪除前須由擁有者確認。
+注意：既有 `npm test` 與 `npm run test:e2e` 包裝器會先編譯到 **repository 的 `dist`**，不是隔離的建置目錄；不要在由同一 repository 提供正式服務的工作目錄中，把這些命令當作無副作用的驗證。兩者的測試 HOME、XDG 與資料環境位於 `.test-artifacts/runs/`，但這不代表建置產物也隔離。測試程序使用專用的私有 HOME 與 XDG 目錄，不讀取 Owner 的 Pi 個人設定或憑證。E2E 測試需要 Playwright Chromium；可透過 `PRW_BROWSER_EXECUTABLE` 指定瀏覽器執行檔。
+
+RPC 管理提供專用的隔離 browser 驗收命令：
+
+```bash
+PRW_BROWSER_EXECUTABLE="$(command -v google-chrome)" node scripts/test-rpc-management.mjs
+```
+
+此命令將 server/web 建置、合成資料與瀏覽器輸出放在唯一的 `.test-artifacts/rpc-management-v1/` 子目錄，不覆寫 repository `dist`，並使用新的 loopback 測試服務與桌面／手機 Chromium。若使用其他 Chromium 執行檔，請調整上述環境變數。`.test-artifacts` 是 gitignore 忽略規則，不代表每個 clone 都有報告；其中若存放部署或資料，刪除前須由擁有者確認。
 
 假 Pi 測試使用合成資料。Basic 真 Pi `openai / gpt-6.1-sol / high`（provider/model/thinking）nonce 與 write call/result/bytes/idle/settled 驗收曾完成。較早常用 Profile 的真 subagent + codemode 未通過，因 child Python `SyntaxError` 阻止 proof 建立；Interface v2 的限定修復情境另已通過。真 steering、真 Compact、TUI、完整 extensions、實體手機、遠端 VPN 與 HTTPS 尚未驗證。測試通過不能代替主機端驗收。
 

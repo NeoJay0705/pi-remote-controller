@@ -1,6 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./test/e2e",
+  // RPC management specs use scripts/test-rpc-management.mjs and its feature fixture.
+  testIgnore: ["**/rpc-management.spec.ts", "**/rpc-management-safety.spec.ts"],
   timeout: 30000,
   fullyParallel: false,
   workers: 1,
